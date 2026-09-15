@@ -1,0 +1,14 @@
+import {readdir,readFile,writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+const paths=await readdir('dist',{recursive:true});
+const files=paths.filter(p=>/\.(mjs|js|css|html|json|svg|png|webmanifest)$/.test(p)&&p!=='sw.js'&&p!=='reference-original.png');
+const hash=createHash('sha256');for(const file of files.sort())hash.update(await readFile('dist/'+file));
+const version=hash.digest('hex').slice(0,12);
+await writeFile('dist/sw.js',`const CACHE='navigator-${version}';
+const FILES=${JSON.stringify(files.map(f=>'./'+f))};
+self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)).then(()=>self.skipWaiting()));});
+self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('navigator-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
+self.addEventListener('fetch',event=>{const url=new URL(event.request.url);if(event.request.method!=='GET'||url.origin!==self.location.origin||!url.pathname.startsWith('/navigator/'))return;
+event.respondWith(caches.open(CACHE).then(async cache=>{const key=event.request.mode==='navigate'?new Request(new URL(url.pathname.endsWith('architecture.html')?'./architecture.html':'./index.html',self.location.href)):event.request;return await cache.match(key,{ignoreVary:true})||fetch(event.request);}));});
+`);
+console.log(`Offline shell: ${files.length} files; cache navigator-${version}`);

@@ -1,0 +1,13 @@
+{
+  "source": "https://api.openstreetmap.org/api/0.6/map.json?bbox=-118.2490,34.0477,-118.2417,34.0538",
+  "retrievedAt": "2026-09-15T16:18:11.708Z",
+  "bbox": [
+    34.0477,
+    -118.249,
+    34.0538,
+    -118.2417
+  ],
+  "license": "ODbL-1.0",
+  "attribution": "© OpenStreetMap contributors",
+  "note": "Downloaded directly from the OSM API after public Overpass endpoints were unavailable."
+}

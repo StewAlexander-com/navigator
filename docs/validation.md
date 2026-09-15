@@ -22,3 +22,9 @@ Reproduce using the instructions in README.md. Screenshots and detailed JSON are
 ## Live data check
 
 A real browser refresh succeeded using the OSM API fallback after Overpass failed. Fetch + parse + geometry build took 1873.4 ms, with a 2,797,291-byte response and 36 visible buildings. This is one observed request, not a service latency guarantee.
+
+## Hovering chevron update
+
+Eight unit tests passed. Browser checks also verified sideways and backward bearings, look-only bearing retention, phone layout, and offline reload. The updated scene uses seven draw calls; the chevron body contains 132 vertices. A five-second local headless movement sample measured 68.9 fps (14.51 ms smoothed frame interval). This remains a short desktop sample, not a physical-phone benchmark.
+
+The isolated GPU fixture showed the chevron with no blocker and zero cyan pixels after an opaque wall was placed between the camera and the chevron. Body, edges, glow and shadow all retain depth testing.

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as maplibregl from 'maplibre-gl';
 import {ORIGIN, LIMITS} from './world.js';
+import {createChevron} from './chevron.js';
 
 const vertexShader = `varying vec3 local; varying vec3 norm; varying vec2 facade;
 void main(){local=position;norm=normal;facade=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
@@ -29,7 +30,7 @@ void main(){
  gl_FragColor=vec4(mix(color,fog,haze),1.);
 }`;
 export function createWorldLayer(player, metrics) {
-  let renderer, scene, camera, building, ground, roads, map;
+  let renderer, scene, camera, building, ground, roads, map, chevron;
   const eye=new THREE.Vector2(), projection=new THREE.Matrix4();
   const mc=maplibregl.MercatorCoordinate.fromLngLat(ORIGIN), s=mc.meterInMercatorCoordinateUnits();
   const localMatrix=new THREE.Matrix4().makeTranslation(mc.x,mc.y,0).scale(new THREE.Vector3(s,-s,s));
@@ -40,6 +41,7 @@ export function createWorldLayer(player, metrics) {
       map=m;scene=new THREE.Scene();camera=new THREE.Camera();
       renderer=new THREE.WebGLRenderer({canvas:m.getCanvas(),context:gl});renderer.autoClear=false;
       ground=new THREE.Mesh(new THREE.PlaneGeometry(1200,1200),materials[1]);ground.position.z=-.04;ground.frustumCulled=false;scene.add(ground);
+      chevron=createChevron(player);scene.add(chevron.group);metrics.chevron=chevron.diagnostics();
     },
     setBuildings(data){
       if(building){scene.remove(building);building.geometry.dispose();}
@@ -63,11 +65,13 @@ export function createWorldLayer(player, metrics) {
     },
     render(gl,args){
       eye.set(player.x,player.y);
+      chevron.update();
       projection.fromArray(args.defaultProjectionData.mainMatrix);
       camera.projectionMatrix.copy(projection).multiply(localMatrix);
       renderer.resetState();renderer.render(scene,camera);
       metrics.drawCalls=renderer.info.render.calls;metrics.triangles=renderer.info.render.triangles;metrics.renderedFrames++;
+      metrics.chevron.bearing=player.travelBearing??player.heading;
     },
-    onRemove(){for(const object of [building,ground,roads])object?.geometry.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
+    onRemove(){for(const object of [building,ground,roads])object?.geometry.dispose();chevron?.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
   };return layer;
 }

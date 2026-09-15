@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **Prototype A** uses manual controls. It does not use GPS, request a camera, or provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **Prototype A + hovering chevron** uses manual controls. It does not use GPS, request a camera, or provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -15,9 +15,9 @@ The app starts with a bundled, real OSM area. The field guide offers an explicit
 
 ## Architecture and scope
 
-Read `public/architecture.html` for the complete staged architecture, explicit adaptations, privacy model and platform limitations. MapLibre controls the true 1.65 m eye-height camera. A single Three.js custom layer batches extruded OSM footprints, ground and roads into three world draw calls. GPU shaders enforce distance fog and cutoff. OSM conversion and building triangulation run in a worker. Native `fill-extrusion` is deliberately replaced by this inspectable bounded renderer.
+Read `public/architecture.html` for the complete staged architecture, explicit adaptations, privacy model and platform limitations. MapLibre controls the true 1.65 m eye-height camera. A single Three.js custom layer batches extruded OSM footprints, ground and roads into three world draw calls, plus four for the hovering chevron. GPU shaders enforce distance fog and cutoff. OSM conversion and building triangulation run in a worker. Native `fill-extrusion` is deliberately replaced by this inspectable bounded renderer.
 
-Buildings use real OSM footprints, including polygon holes. Missing height tags use simple defaults. Windows and road widths are illustrative. No surveyed façade, terrain, collision detection, real GPS, fused heading, route engine, or 3D chevron is claimed in this stage.
+Buildings use real OSM footprints, including polygon holes. Missing height tags use simple defaults. Windows and road widths are illustrative. No surveyed façade, terrain, collision detection, real GPS, fused heading, route engine is claimed in this stage.
 
 ## Budgets
 
@@ -38,3 +38,7 @@ The supplied reference image is preserved unchanged and displayed rotated 90° c
 ## Reproduce browser validation
 
 Run `npx playwright install chromium`, start `npm run preview -- --port 4173` after building, then run `npm run test:browser`. Screenshots and raw measurements go to ignored `test-results/`. These checks cover movement, recenter, mouse look, dialogs, narrow-screen layout, same-origin startup requests, and a real offline reload.
+
+## Hovering chevron
+
+A cyan beveled chevron floats above the street with depth-tested edges, glow and shadow. It stays ahead of the view and points along actual manual travel, including sideways and backward motion. It retains the last travel bearing when stopped; Recenter resets to the view heading. Total draw-call budget is now seven. See [Organic Maps ideas and implementation](docs/organic-maps-reference.md).

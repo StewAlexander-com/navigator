@@ -1,13 +1,14 @@
 import * as maplibregl from 'maplibre-gl';
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import {createWorldLayer} from './renderer.js';
+import {updateTravelBearing} from './chevron.js';
 import {ORIGIN, LIMITS, toLngLat, boundedPosition} from './world.js';
 import './style.css';
 
 const $=id=>document.getElementById(id);
 maplibregl.setWorkerUrl(mapWorkerUrl);
 maplibregl.setWorkerCount(1);
-const player={x:0,y:0,heading:38,pitch:0};
+const player={x:0,y:0,heading:38,pitch:0,travelBearing:null};
 const metrics={renderedFrames:0,drawCalls:0,vertices:0,triangles:0,buildings:0,geometryBytes:0,roadVertices:0,frameMs:null,fps:null,queryMs:null,responseBytes:null};
 const keys=new Set();let ready=false,worldLayer,roads=[],busy=false,lastBuild=[0,0],requestId=0,frameId=0,lastTime=0,uiTime=0,noticeTimer,drag=null,offlineReady=false;
 const worker=new Worker(new URL('./world.worker.js',import.meta.url),{type:'module'});
@@ -39,7 +40,7 @@ function drawMini(){
  c.save();c.translate(120,120);c.rotate(player.heading*Math.PI/180);c.fillStyle='#45dbdd44';c.beginPath();c.moveTo(0,0);c.arc(0,0,38,-Math.PI*.7,-Math.PI*.3);c.closePath();c.fill();c.fillStyle='#075963';c.strokeStyle='#8afff5';c.lineWidth=2;c.beginPath();c.moveTo(0,-13);c.lineTo(8,10);c.lineTo(0,6);c.lineTo(-8,10);c.closePath();c.fill();c.stroke();c.restore();
 }
 function updateUI(){const h=(player.heading%360+360)%360;const [lng,lat]=toLngLat(player.x,player.y);$('heading').textContent=String(Math.round(h)%360).padStart(3,'0')+'°';$('cardinal').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(h/45)%8];$('coordinates').textContent=`${lat.toFixed(5)}° N  ${Math.abs(lng).toFixed(5)}° W`;$('fps').textContent=metrics.fps?`${metrics.fps.toFixed(0)} fps`:'idle';
- const entries=[['Frame interval',metrics.frameMs?`${metrics.frameMs.toFixed(1)} ms`:'Move to measure'],['World draw calls',`${metrics.drawCalls} / 3`],['Building vertices',`${metrics.vertices.toLocaleString()} / 90,000`],['Road vertices',`${metrics.roadVertices.toLocaleString()} / 18,000`],['Loaded buildings',`${metrics.buildings} / 160`],['Geometry buffers',`${(metrics.geometryBytes/1048576).toFixed(2)} MiB`],['Fetch + worker processing',metrics.queryMs?`${metrics.queryMs.toFixed(0)} ms`:'—'],['OSM response',metrics.responseBytes?`${(metrics.responseBytes/1048576).toFixed(2)} MiB`:'—'],['JS heap',performance.memory?`${(performance.memory.usedJSHeapSize/1048576).toFixed(1)} MiB`:'Unavailable'],['GPU memory','Unavailable'],['GPS / heading accuracy','Sensors off']];
+ const entries=[['Frame interval',metrics.frameMs?`${metrics.frameMs.toFixed(1)} ms`:'Move to measure'],['World draw calls',`${metrics.drawCalls} / 7`],['Building vertices',`${metrics.vertices.toLocaleString()} / 90,000`],['Road vertices',`${metrics.roadVertices.toLocaleString()} / 18,000`],['Loaded buildings',`${metrics.buildings} / 160`],['Geometry buffers',`${(metrics.geometryBytes/1048576).toFixed(2)} MiB`],['Fetch + worker processing',metrics.queryMs?`${metrics.queryMs.toFixed(0)} ms`:'—'],['OSM response',metrics.responseBytes?`${(metrics.responseBytes/1048576).toFixed(2)} MiB`:'—'],['JS heap',performance.memory?`${(performance.memory.usedJSHeapSize/1048576).toFixed(1)} MiB`:'Unavailable'],['GPU memory','Unavailable'],['GPS / heading accuracy','Sensors off']];
  $('measurements').replaceChildren(...entries.flatMap(([label,value])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;return[dt,dd];}));}
 function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min((now-lastTime)/1000,.05);const interval=now-lastTime;lastTime=now;
  if(interval>0&&interval<200){metrics.frameMs=metrics.frameMs?metrics.frameMs*.9+interval*.1:interval;metrics.fps=1000/metrics.frameMs;}
@@ -47,7 +48,8 @@ function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min
  player.heading+=(Number(keys.has('ArrowRight'))-Number(keys.has('ArrowLeft')))*65*dt;
  player.pitch=Math.max(-20,Math.min(4,player.pitch+(Number(keys.has('ArrowUp'))-Number(keys.has('ArrowDown')))*25*dt));
  const h=player.heading*Math.PI/180,nx=player.x+(Math.sin(h)*f+Math.cos(h)*s)*3*dt,ny=player.y+(Math.cos(h)*f-Math.sin(h)*s)*3*dt;
- [player.x,player.y]=boundedPosition(nx,ny);if(Math.hypot(nx,ny)>LIMITS.movement)notice('Edge of this prototype area. Turn back or recenter.',2000);
+ const oldX=player.x,oldY=player.y;
+ [player.x,player.y]=boundedPosition(nx,ny);updateTravelBearing(player,player.x-oldX,player.y-oldY);if(Math.hypot(nx,ny)>LIMITS.movement)notice('Edge of this prototype area. Turn back or recenter.',2000);
  camera();
  if(!busy&&Math.hypot(player.x-lastBuild[0],player.y-lastBuild[1])>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y});}
  if(now-uiTime>200){updateUI();drawMini();uiTime=now;}
@@ -60,7 +62,7 @@ addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||e.met
 for(const button of document.querySelectorAll('[data-key]')){button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keys.add(button.dataset.key);button.classList.add('active');start();});button.addEventListener('lostpointercapture',()=>{keys.delete(button.dataset.key);button.classList.remove('active');});}
 $('map').addEventListener('pointerdown',e=>{if(!ready)return;drag={x:e.clientX,y:e.clientY,id:e.pointerId};$('map').setPointerCapture(e.pointerId);});
 $('map').addEventListener('pointermove',e=>{if(!drag||e.pointerId!==drag.id)return;player.heading+=(e.clientX-drag.x)*.18;player.pitch=Math.max(-20,Math.min(4,player.pitch-(e.clientY-drag.y)*.12));drag.x=e.clientX;drag.y=e.clientY;camera();updateUI();drawMini();});$('map').addEventListener('lostpointercapture',()=>{drag=null;});
-$('reset').onclick=()=>{stop();Object.assign(player,{x:0,y:0,heading:38,pitch:0});camera();drawMini();updateUI();if(!busy){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:0,y:0});}notice('Returned to the starting point.',2500);};
+$('reset').onclick=()=>{stop();Object.assign(player,{x:0,y:0,heading:38,pitch:0,travelBearing:null});camera();drawMini();updateUI();if(!busy){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:0,y:0});}notice('Returned to the starting point.',2500);};
 $('menu').onclick=()=>{stop();$('guide').showModal();};$('close-guide').onclick=()=>$('guide').close();$('refresh').onclick=()=>request(true);
 $('stats-toggle').onclick=()=>{const hidden=!$('stats').hidden;$('stats').hidden=hidden;$('stats-toggle').setAttribute('aria-expanded',String(!hidden));updateUI();};
 $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else notice('For a full-screen view on iPhone, use Share → Add to Home Screen.',6000);}catch{notice('Fullscreen is unavailable in this browser.',4000);}};

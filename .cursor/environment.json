@@ -1,0 +1,11 @@
+{
+  "name": "Navigator (Vite + Three.js + MapLibre PWA)",
+  "install": "npm ci && npx playwright install --with-deps chromium",
+  "terminals": [
+    {
+      "name": "vite-dev",
+      "command": "npm run dev",
+      "description": "Vite dev server on http://127.0.0.1:5173/navigator/. For production checks run `npm test && npm run build`, then `npm run preview -- --port 4173` and `npm run test:browser` (Playwright)."
+    }
+  ]
+}

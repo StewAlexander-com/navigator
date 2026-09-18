@@ -28,3 +28,18 @@ A real browser refresh succeeded using the OSM API fallback after Overpass faile
 Eight unit tests passed. Browser checks also verified sideways and backward bearings, look-only bearing retention, phone layout, and offline reload. The updated scene uses seven draw calls; the chevron body contains 132 vertices. A five-second local headless movement sample measured 68.9 fps (14.51 ms smoothed frame interval). This remains a short desktop sample, not a physical-phone benchmark.
 
 The isolated GPU fixture showed the chevron with no blocker and zero cyan pixels after an opaque wall was placed between the camera and the chevron. Body, edges, glow and shadow all retain depth testing.
+
+## Prototype B — GPS and compass
+
+Recorded 2026-09-18 in local headless Chromium (software GL) with Playwright-supplied Geolocation fixes and synthetic `deviceorientationabsolute` events. This is not physical-device validation; no real receiver, magnetometer or walking session is represented.
+
+- Fifteen unit tests passed: seven new tests cover facing-direction derivation (flat, upright, screen-rotated, iOS `webkitCompassHeading`, non-absolute rejected), circular heading easing, position easing and snap, fix gating (inaccurate, out-of-order, implausible, recovery after three rejections, stale reset), travel course rules, 800 m square geometry and re-anchor thresholds, and parsing with a moved origin.
+- Browser checks passed in three contexts: the existing manual/offline context; a GPS context (opt-in dialog, first fix, eased movement, compass heading with drag locked to pitch, inaccurate fix ignored, walk with re-anchor, stop to manual); a denied-permission context that stayed usable manually.
+- First accepted fix 39–41 ms after tapping Enable (browser-emulated receiver; a real GPS cold start is seconds to tens of seconds).
+- A 33 m single-fix step eased to within 3 m of the target in 1.29–1.33 s (τ 0.55 s). Fix interval during the simulated walk: 658 ms. Twelve fixes used, one rejected as inaccurate (±120 m).
+- Compass: a synthetic upright east-facing event (alpha 270, beta 90) settled the view heading to within 0.5° of 90° in under 5 s; a subsequent 200 px drag left heading unchanged.
+- Re-anchor triggered at the first fix where the 180 m view radius left the bundled box (~133 m north of the origin), loading one 800 m square via one Overpass request (answered by the bundled real snapshot). After re-anchoring: 17 buildings, 4,125 building vertices, 10,410 road vertices, 7 draw calls, 1.2 ms worker rebuild, 9.5 MiB JS heap.
+- GPS-mode smoothed frame interval 16.7–29.1 ms while easing (software GL, not GPU time). Manual desktop movement sample in the same run: 34.8 ms (28.8 fps), lower than earlier records because this VM has no GPU.
+- No console/page errors in any context; non-same-origin requests were limited to the single mocked Overpass URL in the GPS context.
+
+Outstanding: iPhone Safari (`requestPermission`, `webkitCompassHeading`), Android Chrome (`deviceorientationabsolute`), real fix cadence and accuracy, magnetic disturbance, 15–20 minute walks, memory pressure, and live Overpass density for an 800 m square in a dense city (the 8 MiB cap with the 500 m retry is enforced but untested against a real dense response).

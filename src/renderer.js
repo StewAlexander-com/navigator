@@ -31,12 +31,13 @@ void main(){
 }`;
 export function createWorldLayer(player, metrics) {
   let renderer, scene, camera, building, ground, roads, map, chevron;
-  const eye=new THREE.Vector2(), projection=new THREE.Matrix4();
-  const mc=maplibregl.MercatorCoordinate.fromLngLat(ORIGIN), s=mc.meterInMercatorCoordinateUnits();
-  const localMatrix=new THREE.Matrix4().makeTranslation(mc.x,mc.y,0).scale(new THREE.Vector3(s,-s,s));
+  const eye=new THREE.Vector2(), projection=new THREE.Matrix4(), localMatrix=new THREE.Matrix4();
+  // Local metres → Mercator. Re-anchoring a GPS area moves the origin; geometry arrives already relative to it.
+  function setOrigin(origin){const mc=maplibregl.MercatorCoordinate.fromLngLat(origin), s=mc.meterInMercatorCoordinateUnits();localMatrix.makeTranslation(mc.x,mc.y,0).scale(new THREE.Vector3(s,-s,s));map?.triggerRepaint();}
+  setOrigin(ORIGIN);
   const materials=[0,1,2].map(kind=>new THREE.ShaderMaterial({vertexShader,fragmentShader,uniforms:{eye:{value:eye},radius:{value:LIMITS.radius},kind:{value:kind}},side:THREE.DoubleSide}));
   function geometry(data){const g=new THREE.BufferGeometry();for(const [key,size] of [['position',3],['normal',3],['uv',2]])g.setAttribute(key,new THREE.BufferAttribute(data[key],size));return g;}
-  const layer={id:'osm-world',type:'custom',renderingMode:'3d',
+  const layer={id:'osm-world',type:'custom',renderingMode:'3d',setOrigin,
     onAdd(m,gl){
       map=m;scene=new THREE.Scene();camera=new THREE.Camera();
       renderer=new THREE.WebGLRenderer({canvas:m.getCanvas(),context:gl});renderer.autoClear=false;

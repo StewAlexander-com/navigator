@@ -3,10 +3,12 @@ import {ShapeUtils, Vector2} from 'three';
 
 export const ORIGIN = [-118.2462058, 34.0510824];
 export const BBOX = [34.0477, -118.2490, 34.0538, -118.2417];
-export const LIMITS = Object.freeze({radius: 180, movement: 120, vertices: 90000, buildings: 160, responseBytes: 8 * 1024 * 1024});
+// `area` is the half-size of a live GPS download square; `areaFallback` is retried once when a dense area exceeds the response cap.
+export const LIMITS = Object.freeze({radius: 180, movement: 120, area: 400, areaFallback: 250, vertices: 90000, buildings: 160, responseBytes: 8 * 1024 * 1024});
 const M = 111319.49079327358;
-export const toLocal = ([lng, lat]) => [(lng - ORIGIN[0]) * M * Math.cos(ORIGIN[1] * Math.PI / 180), (lat - ORIGIN[1]) * M];
-export const toLngLat = (x, y) => [ORIGIN[0] + x / (M * Math.cos(ORIGIN[1] * Math.PI / 180)), ORIGIN[1] + y / M];
+// Local metres are east/north of an origin; the origin is the bundled LA point unless a GPS area re-anchors it.
+export const toLocal = ([lng, lat], origin = ORIGIN) => [(lng - origin[0]) * M * Math.cos(origin[1] * Math.PI / 180), (lat - origin[1]) * M];
+export const toLngLat = (x, y, origin = ORIGIN) => [origin[0] + x / (M * Math.cos(origin[1] * Math.PI / 180)), origin[1] + y / M];
 export function height(tags) {
   const raw = String(tags.height || '');
   const explicit = parseFloat(raw) * (/ft|feet|'/.test(raw) ? 0.3048 : 1);
@@ -18,15 +20,16 @@ export function boundedPosition(x, y) {
   const length = Math.hypot(x, y);
   return length > LIMITS.movement ? [x * LIMITS.movement / length, y * LIMITS.movement / length] : [x, y];
 }
-export function parseWorld(raw) {
+export function parseWorld(raw, origin = ORIGIN) {
   if (!Array.isArray(raw.elements) || raw.elements.length > 30000 || raw.remark) throw new Error('Incomplete or oversized OSM response.');
   const features = osmtogeojson(raw, {flatProperties: true}).features;
   const buildings = [], roads = [];
+  const local = p => toLocal(p, origin);
   for (const f of features) {
     if (f.properties.building && f.properties.building !== 'no') {
       const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [];
       for (const poly of polys) {
-        const rings = poly.map(r => r.slice(0, -1).map(toLocal)).filter(r => r.length >= 3);
+        const rings = poly.map(r => r.slice(0, -1).map(local)).filter(r => r.length >= 3);
         if (!rings.length || rings.flat().some(p => !p.every(Number.isFinite))) continue;
         if (rings.flat().length > 2000) continue;
         const points = rings[0];
@@ -36,11 +39,11 @@ export function parseWorld(raw) {
     }
     if (f.properties.highway && f.geometry.type === 'LineString') {
       const width = ['footway', 'path', 'steps'].includes(f.properties.highway) ? 2 : f.properties.highway === 'service' ? 5 : 14;
-      roads.push({points: f.geometry.coordinates.map(toLocal), width, name: f.properties.name || ''});
+      roads.push({points: f.geometry.coordinates.map(local), width, name: f.properties.name || ''});
     }
   }
   if (!buildings.length) throw new Error('No usable building footprints returned.');
-  return {buildings, roads, timestamp: raw.osm3s?.timestamp_osm_base || null};
+  return {buildings, roads, origin, timestamp: raw.osm3s?.timestamp_osm_base || null};
 }
 function distanceToBox(b, x, y) {return Math.hypot(Math.max(b[0]-x, 0, x-b[2]), Math.max(b[1]-y, 0, y-b[3]));}
 export function buildGeometry(world, x = 0, y = 0) {

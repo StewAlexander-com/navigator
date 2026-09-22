@@ -6,6 +6,6 @@ const scene=new THREE.Scene();scene.background=new THREE.Color('#38454b');
 const camera=new THREE.PerspectiveCamera(45,600/450,.05,30);camera.up.set(0,0,1);camera.position.set(0,0,1.65);camera.lookAt(0,5,1.65);
 const chevron=createChevron({x:0,y:0,heading:0,travelBearing:0});scene.add(chevron.group);
 const blocker=new THREE.Mesh(new THREE.BoxGeometry(8,.1,4),new THREE.MeshBasicMaterial({color:'#38454b'}));blocker.position.set(0,2,1);blocker.visible=false;scene.add(blocker);
-window.checkOcclusion=(blocked)=>{blocker.visible=blocked;renderer.render(scene,camera);const gl=renderer.getContext(),pixels=new Uint8Array(600*450*4);gl.readPixels(0,0,600,450,gl.RGBA,gl.UNSIGNED_BYTE,pixels);let cyan=0;for(let i=0;i<pixels.length;i+=4)if(pixels[i+1]>140&&pixels[i+2]>140&&pixels[i+1]>pixels[i]*1.5)cyan++;return{cyan,drawCalls:renderer.info.render.calls};};
+window.checkOcclusion=(blocked)=>{blocker.visible=blocked!==false;blocker.position.set(blocked==='partial'?4:0,blocked==='behind'?8:2,1);renderer.render(scene,camera);const gl=renderer.getContext(),pixels=new Uint8Array(600*450*4);gl.readPixels(0,0,600,450,gl.RGBA,gl.UNSIGNED_BYTE,pixels);let cyan=0;for(let i=0;i<pixels.length;i+=4)if(pixels[i+1]>140&&pixels[i+2]>140&&pixels[i+1]>pixels[i]*1.5)cyan++;return{cyan,drawCalls:renderer.info.render.calls};};
 window.checkOcclusion(false);
 </script></body></html>

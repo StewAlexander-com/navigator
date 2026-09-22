@@ -71,7 +71,7 @@ export function createWorldLayer(player, metrics) {
       camera.projectionMatrix.copy(projection).multiply(localMatrix);
       renderer.resetState();renderer.render(scene,camera);
       metrics.drawCalls=renderer.info.render.calls;metrics.triangles=renderer.info.render.triangles;metrics.renderedFrames++;
-      metrics.chevron.bearing=player.travelBearing??player.heading;
+      metrics.chevron.bearing=player.heading;
     },
     onRemove(){for(const object of [building,ground,roads])object?.geometry.dispose();chevron?.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
   };return layer;

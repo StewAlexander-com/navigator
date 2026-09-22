@@ -138,5 +138,5 @@ $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await docume
 let installPrompt;addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('install').hidden=false;});$('install').onclick=async()=>{await installPrompt?.prompt();installPrompt=null;$('install').hidden=true;};
 if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;$('offline-status').textContent='App and bundled area are ready offline. Live and GPS areas last only for this session. iPhone: Share → Add to Home Screen.';}).catch(()=>{$('offline-status').textContent='Offline setup failed. Keep this tab online and reload to retry.';});}else $('offline-status').textContent='Offline caching is enabled in the production build.';
 applyMode();
-// Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype B.
+// Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype C.
 window.navigatorDiagnostics=()=>({player:{...player},metrics:{...metrics},ready,busy,offlineReady,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading},sensors:JSON.parse(JSON.stringify(positioning.state))});

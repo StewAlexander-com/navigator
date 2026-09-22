@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export const CHEVRON = Object.freeze({distance:4.5, height:.9, drawCalls:4});
+export const CHEVRON = Object.freeze({distance:4.5, height:1.65, drawCalls:4});
 export function updateTravelBearing(player, dx, dy) {
   // Use the displacement actually accepted by the area boundary, not key intent.
   if (Math.hypot(dx,dy)>1e-5) player.travelBearing=(Math.atan2(dx,dy)*180/Math.PI+360)%360;
@@ -28,14 +28,18 @@ export function createChevron(player) {
   glow.position.z=-.11;glow.renderOrder=10;glow.frustumCulled=false;group.add(glow);
   const shadow=new THREE.Mesh(plane,new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:`varying vec2 p;${distance}void main(){float d=min(segment(p,vec2(-.8,-.25),vec2(0.,.48)),segment(p,vec2(0.,.48),vec2(.8,-.25)));float a=.26*exp(-d*d/.05);if(a<.003)discard;gl_FragColor=vec4(.02,.06,.07,a);}`,transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,forceSinglePass:true}));
   shadow.position.z=.025-CHEVRON.height;shadow.renderOrder=9;shadow.frustumCulled=false;group.add(shadow);
+  // Tilt the glyph toward the eye so its face remains legible at eye height.
+  // The shadow stays on the ground; every component shares the world's depth buffer.
+  for(const part of [body,edges,glow])part.rotation.x=Math.PI/6;
+  glow.position.set(0,.055,-.11*Math.cos(Math.PI/6));
   function update(){
-    const view=player.heading*Math.PI/180, bearing=player.travelBearing??player.heading;
-    // Keep the guide ahead of the view while its world orientation shows travel.
-    // Looking around cannot overwrite the last actual movement bearing.
+    const view=player.heading*Math.PI/180, bearing=player.heading;
+    // Consume the same resolved heading as the camera. Today this is the smoothed
+    // compass or manual fallback; later correction stages can feed this one pose.
     group.position.set(player.x+Math.sin(view)*CHEVRON.distance,player.y+Math.cos(view)*CHEVRON.distance,CHEVRON.height);
     group.rotation.z=-bearing*Math.PI/180;
     group.updateMatrixWorld(true);
   }
   update();
-  return {group,update,diagnostics:()=>({bearing:player.travelBearing??player.heading,height:CHEVRON.height,distance:CHEVRON.distance,drawCalls:CHEVRON.drawCalls,vertices:geometry.attributes.position.count}),dispose(){geometry.dispose();edges.geometry.dispose();plane.dispose();for(const object of [body,edges,glow,shadow])object.material.dispose();}};
+  return {group,update,diagnostics:()=>({bearing:player.heading,height:CHEVRON.height,distance:CHEVRON.distance,drawCalls:CHEVRON.drawCalls,vertices:geometry.attributes.position.count}),dispose(){geometry.dispose();edges.geometry.dispose();plane.dispose();for(const object of [body,edges,glow,shadow])object.material.dispose();}};
 }

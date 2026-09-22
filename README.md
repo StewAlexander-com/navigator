@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **Prototype B** adds opt-in GPS and compass tethering to the manual-control Prototype A + hovering chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **Prototype C** adds an eye-height, heading-driven chevron to Prototype B’s opt-in GPS and compass tethering. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -41,11 +41,11 @@ The supplied reference image is preserved unchanged and displayed rotated 90° c
 
 ## Reproduce browser validation
 
-Run `npx playwright install chromium`, start `npm run preview -- --port 4173` after building, then run `npm run test:browser`. Screenshots and raw measurements go to ignored `test-results/`. These checks cover movement, recenter, mouse look, dialogs, narrow-screen layout, same-origin startup requests, and a real offline reload. A second browser context grants geolocation and drives the real Geolocation API with Playwright fixes plus synthetic `deviceorientationabsolute` events: opt-in dialog, first fix, eased movement and travel course, compass heading with drag locked out, an inaccurate fix being ignored, a walk that re-anchors a live square (Overpass answered with the bundled real snapshot), and stopping. A third context denies geolocation and must stay usable manually. Results are recorded in `docs/validation.md`.
+Run `npx playwright install chromium`, start `npm run preview -- --port 4173` after building, then run `npm run test:browser`. Screenshots and raw measurements go to ignored `test-results/`. For Prototype C occlusion checks, also start `npm run dev -- --port 5173` and run `npm run test:chevron`; this checks partial/full/behind-wall cases and a real OSM wall through the production renderer. These checks cover movement, recenter, mouse look, dialogs, narrow-screen layout, same-origin startup requests, and a real offline reload. A second browser context grants geolocation and drives the real Geolocation API with Playwright fixes plus synthetic `deviceorientationabsolute` events: opt-in dialog, first fix, eased movement and travel course, compass heading with drag locked out, an inaccurate fix being ignored, a walk that re-anchors a live square (Overpass answered with the bundled real snapshot), and stopping. A third context denies geolocation and must stay usable manually. Results are recorded in `docs/validation.md`.
 
 ## Hovering chevron
 
-A cyan beveled chevron floats above the street with depth-tested edges, glow and shadow. It stays ahead of the view and points along actual travel, including sideways and backward motion. In manual mode the bearing comes from accepted displacement; in GPS mode it comes from the receiver's course while moving faster than 0.6 m/s, otherwise from displacement between fixes once it exceeds 4 m or half the fix accuracy. It retains the last travel bearing when stopped; Recenter resets to the view heading. Total draw-call budget is seven. See [Organic Maps ideas and implementation](docs/organic-maps-reference.md).
+A cyan beveled chevron floats at 1.65 m eye height, 4.5 m ahead of the view, with a 30° tilt for readability. Body, edges, glow and ground shadow are depth-tested against the same building geometry as the world. It consumes `player.heading`, the same resolved heading as the camera: smoothed compass when available, manual look otherwise. GPS travel course remains separate and does not override the chevron. Sun/camera fusion is deferred to its assigned stages; this is heading indication, not route guidance or a measured travel direction. The total draw-call budget remains seven, including four for the chevron. See [Organic Maps ideas and implementation](docs/organic-maps-reference.md).
 
 ## GPS and compass (Prototype B)
 

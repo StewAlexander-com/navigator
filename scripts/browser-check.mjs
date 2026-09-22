@@ -16,9 +16,9 @@ await page.keyboard.up('KeyW');assert.ok(Math.hypot(moving.player.x,moving.playe
 await page.mouse.move(600,400);await page.mouse.down();await page.mouse.move(700,400);await page.mouse.up();
 assert.ok(Math.abs((await page.evaluate(()=>window.navigatorDiagnostics())).player.travelBearing-38)<.01);
 await page.locator('#reset').click();await page.keyboard.down('KeyD');await page.waitForTimeout(250);await page.keyboard.up('KeyD');
-await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().metrics.chevron.bearing-128)<.1);
+await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().metrics.chevron.bearing-38)<.1);
 await page.locator('#reset').click();await page.keyboard.down('KeyS');await page.waitForTimeout(250);await page.keyboard.up('KeyS');
-await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().metrics.chevron.bearing-218)<.1);
+await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().metrics.chevron.bearing-38)<.1);
 await page.locator('#reset').click();await page.waitForFunction(()=>!window.navigatorDiagnostics().busy);assert.equal((await page.evaluate(()=>window.navigatorDiagnostics())).player.x,0);
 await page.mouse.move(600,400);await page.mouse.down();await page.mouse.move(750,400);await page.mouse.up();assert.ok((await page.evaluate(()=>window.navigatorDiagnostics())).player.heading>38);
 await page.locator('#reset').click();await page.locator('#menu').click();assert.ok(await page.locator('#guide').isVisible());await page.keyboard.press('Escape');assert.equal(await page.locator('#guide').isVisible(),false);
@@ -53,6 +53,7 @@ await gpsPage.evaluate(()=>window.dispatchEvent(new DeviceOrientationEvent('devi
 await gpsPage.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading-90)<.5,null,{timeout:5000});
 d=await diag(gpsPage);assert.equal(d.sensors.headingSource,'compass');assert.equal(d.sensors.rawHeading,90);assert.equal(await gpsPage.locator('#heading-source').innerText(),'COMPASS');
 await gpsPage.mouse.move(600,400);await gpsPage.mouse.down();await gpsPage.mouse.move(800,400);await gpsPage.mouse.up();assert.ok(Math.abs((await diag(gpsPage)).player.heading-90)<.5);
+const headingCheck=await diag(gpsPage);assert.ok(Math.abs(headingCheck.metrics.chevron.bearing-headingCheck.player.heading)<.1);assert.ok(Math.abs(headingCheck.player.travelBearing)<1);assert.equal(headingCheck.metrics.chevron.height,1.65);
 await gpsPage.evaluate(()=>window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute',{alpha:0,beta:90,gamma:0,absolute:true})));
 await gpsPage.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading)<.5||window.navigatorDiagnostics().player.heading>359.5,null,{timeout:5000});
 // An inaccurate fix is counted but never moves the view.

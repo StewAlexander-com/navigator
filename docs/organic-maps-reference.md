@@ -1,5 +1,7 @@
 # Organic Maps ideas used for the chevron
 
+Historical design note: Prototype C supersedes the travel-bearing presentation below. The current chevron consumes the camera’s resolved heading at 1.65 m eye height, tilted 30° for readability. GPS course and manual displacement remain separate observations; sun/camera correction is still deferred. The automated occlusion check now also exercises real bundled OSM geometry through the production MapLibre custom layer.
+
 Reviewed [Organic Maps](https://github.com/organicmaps/organicmaps) at revision `780ed4f059ed3ac01f38df788c6e781e05500487`.
 
 - [`libs/drape_frontend/arrow3d.cpp`](https://github.com/organicmaps/organicmaps/blob/780ed4f059ed3ac01f38df788c6e781e05500487/libs/drape_frontend/arrow3d.cpp) separates arrow mesh, outline, shadow, position and azimuth. Navigator similarly creates reusable body, edge, glow and shadow geometry once, then updates its transform. No Organic Maps source code, meshes or map files were copied.

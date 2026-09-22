@@ -1,0 +1,26 @@
+<!doctype html><html><head><style>html,body,#map{margin:0;width:100%;height:100%}</style></head><body><div id="map"></div><script type="module">
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import {createWorldLayer} from '../src/renderer.js';
+import {parseWorld,buildGeometry,ORIGIN,toLngLat} from '../src/world.js';
+const world=parseWorld(await(await fetch('../osm-snapshot.json')).json());
+// Use an actual OSM wall, not a proxy box: put the eye 2 m outside its midpoint.
+let edge;
+for(const b of world.buildings){
+ const ring=b.rings[0];let signed=0;for(let i=0;i<ring.length;i++){const a=ring[i],c=ring[(i+1)%ring.length];signed+=a[0]*c[1]-c[0]*a[1];}
+ for(let i=0;i<ring.length;i++){const a=ring[i],c=ring[(i+1)%ring.length],dx=c[0]-a[0],dy=c[1]-a[1],length=Math.hypot(dx,dy);if(length>12&&b.height>4){const sign=Math.sign(signed);edge={b,x:(a[0]+c[0])/2,y:(a[1]+c[1])/2,nx:sign*dy/length,ny:-sign*dx/length};break;}}
+ if(edge)break;
+}
+if(!edge)throw new Error('No suitable real OSM wall');
+const player={x:edge.x+edge.nx*2,y:edge.y+edge.ny*2,heading:Math.atan2(-edge.nx,-edge.ny)*180/Math.PI,travelBearing:0};
+const metrics={renderedFrames:0},geometry=buildGeometry({buildings:[edge.b]},player.x,player.y);
+const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#b0bfc9'}}]},center:ORIGIN,zoom:18,maxPitch:95,centerClampedToGround:false,interactive:false,attributionControl:false,canvasContextAttributes:{antialias:false,preserveDrawingBuffer:true}});
+map.on('load',()=>{
+ const layer=createWorldLayer(player,metrics);map.addLayer(layer);layer.setRoads(world.roads);
+ const h=player.heading*Math.PI/180;map.jumpTo(map.calculateCameraOptionsFromTo(toLngLat(player.x,player.y),1.65,toLngLat(player.x+Math.sin(h)*20,player.y+Math.cos(h)*20),1.65));
+ window.checkWorldOcclusion=blocked=>new Promise(resolve=>{
+  layer.setBuildings(blocked?geometry:buildGeometry({buildings:[]}));
+  map.once('render',()=>{const canvas=map.getCanvas(),gl=canvas.getContext('webgl2'),pixels=new Uint8Array(canvas.width*canvas.height*4);gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);let cyan=0;for(let i=0;i<pixels.length;i+=4)if(pixels[i+1]>140&&pixels[i+2]>140&&pixels[i+1]>pixels[i]*1.5)cyan++;resolve({cyan,buildingId:edge.b.id,buildingVertices:geometry.position.length/3,metrics:{...metrics}});});map.triggerRepaint();
+ });
+});
+</script></body></html>

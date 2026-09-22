@@ -8,7 +8,8 @@
     "build": "vite build && node scripts/service-worker.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.test.mjs",
-    "test:browser": "node scripts/browser-check.mjs"
+    "test:browser": "node scripts/browser-check.mjs",
+    "test:chevron": "node scripts/chevron-check.mjs"
   },
   "dependencies": {
     "maplibre-gl": "6.9.1",

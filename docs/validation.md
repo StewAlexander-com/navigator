@@ -43,3 +43,18 @@ Recorded 2026-09-18 in local headless Chromium (software GL) with Playwright-sup
 - No console/page errors in any context; non-same-origin requests were limited to the single mocked Overpass URL in the GPS context.
 
 Outstanding: iPhone Safari (`requestPermission`, `webkitCompassHeading`), Android Chrome (`deviceorientationabsolute`), real fix cadence and accuracy, magnetic disturbance, 15–20 minute walks, memory pressure, and live Overpass density for an 800 m square in a dense city (the 8 MiB cap with the 500 m retry is enforced but untested against a real dense response).
+
+
+## Prototype C — eye-height heading chevron
+
+Recorded 2026-09-21 against local changes based on GitHub `main` at `98c71f8fd4980f1c895a9b2ad6527b2f22725ba2`. `git pull --ff-only` reported already up to date before edits.
+
+- `npm test`: 15 passed, 0 failed. `npm run build`: passed (Vite retains its bundle-size warning).
+- `npm run test:browser`: passed; no console/page or asset errors. Covers manual movement, compass-driven chevron while GPS course differs, denied GPS fallback, live-square re-anchoring with a mocked Overpass response, offline reload, and 390 × 844 layout without horizontal overflow. Desktop and mobile screenshots visually inspected.
+- Chevron origin: 1.65 m above the flat ground, 4.5 m ahead. Its 132-vertex body, edges, glow and ground shadow still use four draw calls; world total remains seven. Unique chevron geometry typed arrays total 5,372 bytes, excluding GPU copies, shader programs and object overhead. Geometry is reused during pose updates.
+- Five-second manual desktop sample: 71.18 fps, 14.05 ms smoothed animation-frame interval; 33 loaded buildings, 4,422 building vertices, 141,504 building-buffer bytes, and 10,410 road vertices. Latest worker rebuild: 1.50 ms. First view: 205.60 ms on localhost. These are short headless Chromium measurements, not phone benchmarks or GPU execution time; total GPU memory remains unavailable.
+- `npm run test:chevron`: passed. Isolated fixture: 6,034 cyan pixels unobstructed, 0 behind a full wall, 3,017 behind a half-width wall, 6,034 when the wall is farther away than the chevron.
+- Production MapLibre custom-layer fixture uses bundled OSM `relation/6333145` (576 building vertices), with the eye 2 m outside a real wall and the chevron on the other side. Unobstructed: 18,728 cyan pixels; building present: 0; building removed: 18,728. Both screenshots visually inspected. This proves shared-depth occlusion for that wall and pose, not every possible geometry or device.
+- Heading source is the camera's resolved `player.heading` (smoothed absolute compass, otherwise manual). GPS course remains a separate observation. Sun/camera fusion is not implemented in this stage; real heading accuracy cannot be inferred from synthetic orientation events.
+
+Reproduce: start production preview on port 4173 after building, run `npm run test:browser`; also start Vite dev on port 5173 and run `npm run test:chevron`. Raw JSON and screenshots are retained locally in ignored `test-results/`. Physical iOS/Android, compass accuracy and 15–20 minute walking/memory-pressure checks remain outstanding. No deployment was performed for this change.

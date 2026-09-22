@@ -4,7 +4,7 @@
 import {compassHeading, evaluateFix, travelCourse, SENSORS} from './sensors.js';
 
 export function createPositioning(handlers) {
-  const state = {mode: 'manual', headingSource: 'manual', position: 'off', compass: 'off', fixes: {accepted: 0, rejected: 0, streak: 0, lastReason: null}, lastFix: null, courseAnchor: null, course: null, accuracy: null, compassAccuracy: null, rawHeading: null, headingEvents: 0, fixIntervalMs: null, error: null};
+  const state = {mode: 'manual', headingSource: 'manual', position: 'off', compass: 'off', fixes: {accepted: 0, rejected: 0, streak: 0, lastReason: null}, lastFix: null, courseAnchor: null, course: null, accuracy: null, compassAccuracy: null, rawHeading: null, headingEvents: 0, headingAt: null, compassFlat: false, screenAngle: 0, fixIntervalMs: null, error: null};
   let watchId = null, orientationEvent = null, compassTimer = 0, active = false;
   const screenAngle = () => screen.orientation?.angle ?? (Number(window.orientation) || 0);
   const changed = () => handlers.onState?.(state);
@@ -17,7 +17,7 @@ export function createPositioning(handlers) {
       return;
     }
     if (state.compass !== 'on') {clearTimeout(compassTimer); state.compass = 'on'; state.headingSource = 'compass'; changed();}
-    state.rawHeading = heading; state.headingEvents++;
+    state.rawHeading = heading; state.headingEvents++; state.headingAt = Date.now(); state.screenAngle = screenAngle(); state.compassFlat = Number.isFinite(event.beta) && Number.isFinite(event.gamma) && Math.abs(event.beta) < 20 && Math.abs(event.gamma) < 20;
     state.compassAccuracy = Number.isFinite(event.webkitCompassAccuracy) && event.webkitCompassAccuracy >= 0 ? event.webkitCompassAccuracy : null;
     handlers.onHeading(heading);
   }

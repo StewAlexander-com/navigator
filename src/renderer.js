@@ -45,14 +45,14 @@ export function createWorldLayer(player, metrics) {
       chevron=createChevron(player);scene.add(chevron.group);metrics.chevron=chevron.diagnostics();
     },
     setBuildings(data){
-      if(building){scene.remove(building);building.geometry.dispose();}
+      if(building){scene.remove(building);building.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
       building=new THREE.Mesh(geometry(data),materials[0]);building.frustumCulled=false;scene.add(building);
       metrics.vertices=data.position.length/3;metrics.buildings=data.count;metrics.simplified=data.simplified;metrics.omitted=data.omitted;
       metrics.geometryBytes=data.position.byteLength+data.normal.byteLength+data.uv.byteLength;
       map.triggerRepaint();
     },
     setRoads(data){
-      if(roads){scene.remove(roads);roads.geometry.dispose();}
+      if(roads){scene.remove(roads);roads.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
       const p=[];
       for(const road of data)for(let i=1;i<road.points.length;i++){
         const a=road.points[i-1],b=road.points[i],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);if(len<.01)continue;
@@ -71,7 +71,7 @@ export function createWorldLayer(player, metrics) {
       camera.projectionMatrix.copy(projection).multiply(localMatrix);
       renderer.resetState();renderer.render(scene,camera);
       metrics.drawCalls=renderer.info.render.calls;metrics.triangles=renderer.info.render.triangles;metrics.renderedFrames++;
-      metrics.chevron.bearing=player.heading;
+      metrics.chevron.bearing=player.chevronHeading??player.heading;
     },
     onRemove(){for(const object of [building,ground,roads])object?.geometry.dispose();chevron?.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
   };return layer;

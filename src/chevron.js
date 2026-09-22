@@ -33,13 +33,13 @@ export function createChevron(player) {
   for(const part of [body,edges,glow])part.rotation.x=Math.PI/6;
   glow.position.set(0,.055,-.11*Math.cos(Math.PI/6));
   function update(){
-    const view=player.heading*Math.PI/180, bearing=player.heading;
-    // Consume the same resolved heading as the camera. Today this is the smoothed
-    // compass or manual fallback; later correction stages can feed this one pose.
+    const view=player.heading*Math.PI/180, bearing=player.chevronHeading??player.heading;
+    // Resolved compass direction is independent of an optional free-look camera.
+    // Without a compass, manual view heading remains the fallback.
     group.position.set(player.x+Math.sin(view)*CHEVRON.distance,player.y+Math.cos(view)*CHEVRON.distance,CHEVRON.height);
     group.rotation.z=-bearing*Math.PI/180;
     group.updateMatrixWorld(true);
   }
   update();
-  return {group,update,diagnostics:()=>({bearing:player.heading,height:CHEVRON.height,distance:CHEVRON.distance,drawCalls:CHEVRON.drawCalls,vertices:geometry.attributes.position.count}),dispose(){geometry.dispose();edges.geometry.dispose();plane.dispose();for(const object of [body,edges,glow,shadow])object.material.dispose();}};
+  return {group,update,diagnostics:()=>({bearing:player.chevronHeading??player.heading,height:CHEVRON.height,distance:CHEVRON.distance,drawCalls:CHEVRON.drawCalls,vertices:geometry.attributes.position.count}),dispose(){geometry.dispose();edges.geometry.dispose();plane.dispose();for(const object of [body,edges,glow,shadow])object.material.dispose();}};
 }

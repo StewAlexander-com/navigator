@@ -1,0 +1,12 @@
+import fs from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {parseWorld} from '../src/world.js';
+import {createChunkIndex} from '../src/chunks.js';
+const source=await fs.readFile('public/osm-snapshot.json'),world=parseWorld(JSON.parse(source));
+const chunks=[...createChunkIndex(world).values()].map(c=>({id:c.id,x:c.x,y:c.y,bounds:c.bounds,buildingIndices:c.buildings.map(b=>world.buildings.indexOf(b)),roadSegments:c.roads.map(r=>r.source)}));
+const input={world,chunks,sourceSha256:createHash('sha256').update(source).digest('hex')};
+const result=spawnSync(process.env.NAVIGATOR_PYTHON||'python3',['scripts/ingest-sectors.py'],{input:JSON.stringify(input),encoding:'utf8',maxBuffer:32*1024*1024});
+if(result.status!==0)throw new Error(result.stderr||result.error||'Sector ingestion failed.');
+const graph=JSON.parse(result.stdout),output=JSON.stringify(graph);await fs.writeFile('public/osm-sectors.json',output);
+console.log(JSON.stringify({sectors:graph.sectors.length,chunks:graph.chunks.length,edges:graph.sectors.reduce((n,s)=>n+s.neighbors.length,0)/2,bytes:Buffer.byteLength(output),sourceSha256:graph.sourceSha256}));

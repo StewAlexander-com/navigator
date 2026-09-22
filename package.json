@@ -1,15 +1,21 @@
 {
   "name": "navigator",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "vite build && node scripts/service-worker.mjs",
+    "build": "node scripts/check-sectors.mjs && vite build && node scripts/service-worker.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.test.mjs",
     "test:browser": "node scripts/browser-check.mjs",
-    "test:chevron": "node scripts/chevron-check.mjs"
+    "test:chevron": "node scripts/chevron-check.mjs",
+    "test:sun": "node scripts/sun-check.mjs",
+    "test:stream": "node scripts/stream-check.mjs",
+    "ingest:sectors": "node scripts/ingest-sectors.mjs",
+    "check:sectors": "node scripts/check-sectors.mjs",
+    "bench:sectors": "node scripts/benchmark-sectors.mjs",
+    "test:free-look": "node scripts/free-look-check.mjs"
   },
   "dependencies": {
     "maplibre-gl": "6.9.1",

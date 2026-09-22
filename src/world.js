@@ -39,25 +39,25 @@ export function parseWorld(raw, origin = ORIGIN) {
     }
     if (f.properties.highway && f.geometry.type === 'LineString') {
       const width = ['footway', 'path', 'steps'].includes(f.properties.highway) ? 2 : f.properties.highway === 'service' ? 5 : 14;
-      roads.push({points: f.geometry.coordinates.map(local), width, name: f.properties.name || ''});
+      roads.push({points: f.geometry.coordinates.map(local), width, name: f.properties.name || '', highway:f.properties.highway, bridge:f.properties.bridge, tunnel:f.properties.tunnel, layer:f.properties.layer});
     }
   }
   if (!buildings.length) throw new Error('No usable building footprints returned.');
   return {buildings, roads, origin, timestamp: raw.osm3s?.timestamp_osm_base || null};
 }
 function distanceToBox(b, x, y) {return Math.hypot(Math.max(b[0]-x, 0, x-b[2]), Math.max(b[1]-y, 0, y-b[3]));}
-export function buildGeometry(world, x = 0, y = 0) {
+export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
   const pos = [], normal = [], uv = [];
   function triangle(a,b,c,n,ta=[0,0],tb=[0,0],tc=[0,0]) {pos.push(...a,...b,...c); normal.push(...n,...n,...n); uv.push(...ta,...tb,...tc);}
   const candidates = world.buildings.filter(b => distanceToBox(b.bounds,x,y) <= LIMITS.radius).sort((a,b)=>distanceToBox(a.bounds,x,y)-distanceToBox(b.bounds,x,y));
   let count = 0, simplified = 0;
   for (const b of candidates) {
-    if (count >= LIMITS.buildings) break;
+    if (count >= budget.buildings) break;
     let rings = b.rings;
     const required = rings.reduce((s,r)=>s+r.length*9,0)+rings.length*6;
-    if (pos.length/3 + required > LIMITS.vertices) {
+    if (pos.length/3 + required > budget.vertices) {
       const [a,c,d,e] = b.bounds; rings = [[[a,c],[d,c],[d,e],[a,e]]]; simplified++;
-      if (pos.length/3 + 36 > LIMITS.vertices) break;
+      if (pos.length/3 + 36 > budget.vertices) break;
     }
     const vectors = rings.map(r=>r.map(p=>new Vector2(...p)));
     const roof = ShapeUtils.triangulateShape(vectors[0], vectors.slice(1));

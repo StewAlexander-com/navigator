@@ -31,8 +31,8 @@ const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers
 function fitView(){map.setVerticalFieldOfView(innerWidth<700?65:45);if(ready)camera();}
 fitView();addEventListener('resize',fitView);
 map.on('load',()=>{worldLayer=createWorldLayer(player,metrics,anchor=>{
- const pill=$('street-pill');pill.hidden=!anchor.visible||anchor.y-74<innerHeight*.35||anchor.y-26>innerHeight-170;
- pill.style.left=anchor.x+'px';pill.style.top=(anchor.y-26)+'px';
+ const pill=$('street-pill');pill.hidden=!anchor.visible||anchor.y-48<innerHeight*.35||anchor.y>innerHeight-170;
+ pill.style.left=anchor.x+'px';pill.style.top=anchor.y+'px';
 });map.addLayer(worldLayer);camera();request();});
 map.on('error',e=>{console.error(e.error);notice('The 3D view encountered an error. Reload to try again.');});
 map.getCanvas().addEventListener('webglcontextlost',e=>{e.preventDefault();stop();notice('Graphics context lost. Reload the page to restore this area.');});

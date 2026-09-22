@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.6 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.7 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -117,3 +117,9 @@ The separate road-cache limits are 128 MiB stored payloads, 4 MiB per response, 
 The footer reports completed areas, stored bytes and download state. This is a target, not guaranteed complete coverage: public-service outages, rate limits, quota and conservative edge eviction can leave gaps. Road names also depend on OSM tagging and approximate position matching. Full-radius transfer measurements and physical-phone offline walking remain unverified. Building downloads keep their existing small-area behavior.
 
 Run `npm run test:road-cache` against production preview for installation, real IndexedDB persistence, offline reload, multi-tab access, clear and phone-layout checks with controlled OSM responses. Implementation decisions, evidence and limitations: [five-pass Organic Maps review](docs/road-cache-review.md).
+
+### Autumn afternoon materials (v0.1.7)
+
+Warm limestone, honey-colored directional light, cooler shaded faces and a blue-to-gold sky replace the gray scene. Glass uses an analytic sky/ground reflection, a grazing-angle tint and a compact sun highlight; recessed pane edges and base shading add depth. Roads use a restrained grazing sheen and distance/footprint-filtered aggregate grain. The sky is a static CSS gradient behind the transparent canvas.
+
+These are illustrative lighting/material cues, not current sunlight, cast building shadows or reflections of actual nearby geometry. The compass and explicit Sun cross-check remain independent. No textures, texture downloads, extra meshes, shadow maps, reflection buffers or post-processing passes are added. The seven world/chevron draw calls and geometry caps are unchanged; fragment shader math increases modestly. Physical-phone GPU cost remains unmeasured. Browser movement/offline/GPS, street-label and GPU chevron-occlusion checks pass.

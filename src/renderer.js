@@ -5,29 +5,57 @@ import {createChevron} from './chevron.js';
 
 const vertexShader = `varying vec3 local; varying vec3 norm; varying vec2 facade;
 void main(){local=position;norm=normal;facade=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+// Analytic material cues: no textures, shadow maps, reflection targets or extra passes.
+// The afternoon light is art direction, independent of the measured compass/sun check.
 const fragmentShader = `precision highp float;
 uniform vec2 eye; uniform float radius; uniform float kind;
 varying vec3 local; varying vec3 norm; varying vec2 facade;
+float grain(vec2 p){vec3 q=fract(vec3(p.xyx)*.1031);q+=dot(q,q.yzx+33.33);return fract((q.x+q.y)*q.z);}
 void main(){
  float d=distance(local.xy,eye);if(d>radius)discard;
- vec3 fog=vec3(.69,.75,.79); vec3 color=vec3(.64,.67,.69);
+ vec3 fog=vec3(.90,.80,.66);
+ vec3 sun=normalize(vec3(-.65,-.35,.48));
+ vec3 view=normalize(vec3(eye,1.65)-local);
+ vec3 color;
  if(kind<.5){
-  float lighting=.72+.28*abs(dot(normalize(norm),normalize(vec3(-.4,-.7,1.))));
-  color*=lighting;
-  if(abs(norm.z)<.5){
+  vec3 n=normalize(norm);
+  float light=max(dot(n,sun),0.);
+  // Warm limestone, soft blue skylight on shaded faces, honey on sun-facing walls.
+  vec3 illumination=vec3(.57,.64,.70)+vec3(.53,.35,.14)*light;
+  color=vec3(.80,.68,.51)*illumination;
+  color*=mix(.72,1.,smoothstep(0.,5.,local.z));
+  if(abs(n.z)<.5){
    vec2 cell=fract(facade/vec2(3.4,3.2));
    float window=step(.19,cell.x)*step(cell.x,.73)*step(.22,cell.y)*step(cell.y,.79)*step(1.,local.z);
    float frame=step(.15,cell.x)*step(cell.x,.77)*step(.18,cell.y)*step(cell.y,.83)*step(1.,local.z);
-   color=mix(color,vec3(.79,.81,.81)*lighting,frame);
-   color=mix(color,vec3(.22,.27,.30)*lighting,window);
-   color*=1.-.08*step(.96,cell.y);
+   color=mix(color,vec3(.93,.82,.64)*illumination,frame);
+   // An analytic sky/ground environment creates angle-dependent glass, not scene reflections.
+   vec3 reflected=reflect(-view,n);
+   float sky=smoothstep(-.12,.65,reflected.z);
+   vec3 glass=mix(vec3(.18,.24,.27),vec3(.59,.72,.78),sky);
+   float fresnel=1.-max(dot(n,view),0.);fresnel*=fresnel;
+   glass=mix(glass,vec3(.87,.74,.53),.24*fresnel);
+   float glint=pow(max(dot(reflected,sun),0.),24.);
+   glass+=vec3(.70,.40,.12)*glint;
+   // Recessed top edge gives each pane depth without geometry or shadow sampling.
+   glass*=mix(.76,1.,smoothstep(.22,.34,cell.y));
+   color=mix(color,glass,window);
+   color*=1.-.12*step(.96,cell.y);
   }
  }else if(kind<1.5){
-   color=vec3(.46,.49,.51);
+   color=vec3(.64,.54,.40);
    vec2 tile=abs(fract(local.xy/2.)-.5);color*=1.-.10*step(.48,max(tile.x,tile.y));
- }else{color=vec3(.25,.29,.32);}
- float haze=smoothstep(radius*.25,radius*.94,d);
- gl_FragColor=vec4(mix(color,fog,haze),1.);
+ }else{
+   color=vec3(.29,.29,.27);
+   // Broad, restrained grazing sheen reads as worn aggregate rather than a wet mirror.
+   float grazing=1.-max(view.z,0.);grazing*=grazing;
+   color+=vec3(.14,.105,.055)*grazing;
+   float footprint=max(fwidth(local.x*14.),fwidth(local.y*14.));
+   float detail=(1.-smoothstep(8.,38.,d))*(1.-smoothstep(.35,1.,footprint));
+   color+=(grain(floor(local.xy*14.))-.5)*.035*detail;
+ }
+ float haze=smoothstep(radius*.35,radius*.98,d);
+ gl_FragColor=vec4(mix(color,fog,haze*.94),1.);
 }`;
 export function createWorldLayer(player, metrics, onChevronAnchor=null) {
   let renderer, scene, camera, building, ground, roads, map, chevron;

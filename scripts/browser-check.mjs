@@ -48,11 +48,11 @@ assert.equal(await gpsPage.locator('#position-label').innerText(),'GPS POSITION 
 await gpsPage.waitForTimeout(2500);await gpsContext.setGeolocation({latitude:HOME.latitude+.0003,longitude:HOME.longitude,accuracy:8});
 const easeStart=Date.now();await gpsPage.waitForFunction(()=>window.navigatorDiagnostics().player.y>30,null,{timeout:10000});const easeMs=Date.now()-easeStart;
 d=await diag(gpsPage);assert.ok(Math.abs(d.player.travelBearing)<1,`course ${d.player.travelBearing}`);assert.equal(d.metrics.drawCalls,7);assert.ok(d.metrics.fps>0);
-// Compass: device upright (beta 90) with alpha 270 faces east. Dragging must not override the compass heading.
+// Compass: device upright (beta 90) with alpha 270 faces east. Dragging temporarily looks around, then returns to the compass heading.
 await gpsPage.evaluate(()=>window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute',{alpha:270,beta:90,gamma:0,absolute:true})));
 await gpsPage.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading-90)<.5,null,{timeout:5000});
 d=await diag(gpsPage);assert.equal(d.sensors.headingSource,'compass');assert.equal(d.sensors.rawHeading,90);assert.equal(await gpsPage.locator('#heading-source').innerText(),'COMPASS');
-await gpsPage.mouse.move(600,400);await gpsPage.mouse.down();await gpsPage.mouse.move(800,400);await gpsPage.mouse.up();assert.ok(Math.abs((await diag(gpsPage)).player.heading-90)<.5);
+await gpsPage.mouse.move(600,400);await gpsPage.mouse.down();await gpsPage.mouse.move(800,400);assert.ok(Math.abs((await diag(gpsPage)).player.heading-90)>20);await gpsPage.mouse.up();await gpsPage.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading-90)<.05);
 const headingCheck=await diag(gpsPage);assert.ok(Math.abs(headingCheck.metrics.chevron.bearing-headingCheck.player.heading)<.1);assert.ok(Math.abs(headingCheck.player.travelBearing)<1);assert.equal(headingCheck.metrics.chevron.height,1.65);
 await gpsPage.evaluate(()=>window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute',{alpha:0,beta:90,gamma:0,absolute:true})));
 await gpsPage.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading)<.5||window.navigatorDiagnostics().player.heading>359.5,null,{timeout:5000});

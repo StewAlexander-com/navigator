@@ -39,7 +39,7 @@ const positioning=createPositioning({
   if(positioning.state.fixes.accepted===1){[player.x,player.y]=gps.target;camera();notice(`Location found (±${Math.round(fix.accuracy)} m). ${positioning.state.compass==='on'?'Turn to look around.':'Drag to look around.'}`,6000);}
   ensureAreaCovers(fix);start();
  },
- onHeading(){gps.rawHeading=positioning.state.rawHeading;sunCheck?.onHeading();if(Math.abs(headingDelta(followCompass?player.heading:player.chevronHeading??player.heading,sunCheck?.heading(gps.rawHeading)??gps.rawHeading))>SENSORS.idleHeading)start();},
+ onHeading(){gps.rawHeading=positioning.state.rawHeading;sunCheck?.onHeading();const target=sunCheck?.heading(gps.rawHeading)??gps.rawHeading;if(Math.abs(headingDelta(player.chevronHeading??player.heading,target))>SENSORS.idleHeading||(followCompass&&!drag&&Math.abs(headingDelta(player.heading,target))>SENSORS.idleHeading))start();},
  onError(kind){notice(kind==='denied'?'Location permission was denied. Manual exploration continues.':kind==='unavailable'?'Location is unavailable right now. Waiting for a fix…':'No location fix yet. Move to open sky or wait.',6000);},
  onState(){sunCheck?.refresh();applyMode();}
 });
@@ -92,7 +92,7 @@ function applyMode(){
  $('gps-toggle').textContent=live?'Stop using my location':'Use my location';
  $('position-label').textContent=live?(s.position==='on'?`GPS POSITION · ±${Math.round(s.accuracy)} m`:'GPS POSITION · WAITING FOR FIX'):'VIRTUAL POSITION · GPS OFF';
  $('view-mode').hidden=!live;$('view-mode').disabled=s.compass!=='on';$('view-mode').setAttribute('aria-pressed',String(!followCompass));$('view-mode').textContent=s.compass!=='on'?'View: manual':followCompass?'View: compass':'View: free look';
- $('heading-source').textContent=live&&!followCompass?'FREE LOOK':compass&&sunCheck?.snapshot().applied?'SUN-ALIGNED':compass?(s.compassAccuracy!==null?`COMPASS ±${Math.round(s.compassAccuracy)}°`:'COMPASS'):live?({waiting:'COMPASS…',denied:'COMPASS DENIED',unavailable:'NO COMPASS',paused:'PAUSED'}[s.compass]||'MANUAL LOOK'):'MANUAL';
+ $('heading-source').textContent=live&&!followCompass?'FREE LOOK':compass&&drag?'LOOK AROUND':compass&&sunCheck?.snapshot().applied?'SUN-ALIGNED':compass?(s.compassAccuracy!==null?`COMPASS ±${Math.round(s.compassAccuracy)}°`:'COMPASS'):live?({waiting:'COMPASS…',denied:'COMPASS DENIED',unavailable:'NO COMPASS',paused:'PAUSED'}[s.compass]||'MANUAL LOOK'):'MANUAL';
  $('reset').title=live?'Snap to the latest GPS fix':'Return to starting point';$('reset-label').textContent=live?'Snap':'Recenter';
  if(live&&s.compass!=='on'&&s.compass!=='waiting'&&!applyMode.warned){applyMode.warned=true;notice(s.compass==='denied'?'Motion & orientation access was denied. Drag or use the turn buttons to look around.':s.compass==='unavailable'?'No absolute compass is available here. Drag or use the turn buttons to look around.':'',6000);}
  if(!live)applyMode.warned=false;
@@ -104,7 +104,7 @@ function updateUI(){const h=(player.heading%360+360)%360;const [lng,lat]=toLngLa
  $('measurements').replaceChildren(...entries.flatMap(([label,value])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;return[dt,dd];}));}
 function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min((now-lastTime)/1000,.05);const interval=now-lastTime;lastTime=now;
  if(interval>0&&interval<200){metrics.frameMs=metrics.frameMs?metrics.frameMs*.9+interval*.1:interval;metrics.fps=1000/metrics.frameMs;}
- const live=positioning.state.mode==='gps',sensorCompass=live&&positioning.state.compass==='on'&&gps.rawHeading!==null,compass=sensorCompass&&followCompass;
+ const live=positioning.state.mode==='gps',sensorCompass=live&&positioning.state.compass==='on'&&gps.rawHeading!==null,compass=sensorCompass&&followCompass&&!drag;
  const targetHeading=sensorCompass?sunCheck.heading(gps.rawHeading):null;
  if(sensorCompass)player.chevronHeading=smoothHeading(player.chevronHeading??player.heading,targetHeading,dt);else player.chevronHeading=null;
  if(compass)player.heading=smoothHeading(player.heading,targetHeading,dt);
@@ -127,14 +127,20 @@ function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min
  if(keys.size||!settled)frameId=requestAnimationFrame(loop);else{metrics.fps=null;updateUI();drawMini();}
 }
 function start(){if(!frameId&&ready){lastTime=performance.now();frameId=requestAnimationFrame(loop);}}
-function stop(){keys.clear();if(frameId)cancelAnimationFrame(frameId);frameId=0;document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));metrics.fps=null;}
+function stop(){if(drag){const id=drag.id;drag=null;if($('map').hasPointerCapture(id))$('map').releasePointerCapture(id);}keys.clear();if(frameId)cancelAnimationFrame(frameId);frameId=0;document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));metrics.fps=null;}
 const supported=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','ArrowUp','ArrowDown']);
-addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);
+addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);addEventListener('focus',start);
 document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();positioning.pause();}else{positioning.resume();start();}});
 for(const button of document.querySelectorAll('[data-key]')){button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keys.add(button.dataset.key);button.classList.add('active');start();});button.addEventListener('lostpointercapture',()=>{keys.delete(button.dataset.key);button.classList.remove('active');});}
-$('map').addEventListener('pointerdown',e=>{if(!ready)return;drag={x:e.clientX,y:e.clientY,id:e.pointerId};$('map').setPointerCapture(e.pointerId);});
-// While the compass owns the heading, dragging only adjusts pitch.
-$('map').addEventListener('pointermove',e=>{if(!drag||e.pointerId!==drag.id)return;if(document.body.dataset.heading!=='compass')player.heading+=(e.clientX-drag.x)*.18;player.pitch=Math.max(-20,Math.min(4,player.pitch-(e.clientY-drag.y)*.12));drag.x=e.clientX;drag.y=e.clientY;camera();updateUI();drawMini();});$('map').addEventListener('lostpointercapture',()=>{drag=null;});
+// A compass-follow drag temporarily owns the view; release eases back to the latest sensor heading.
+$('map').addEventListener('pointerdown',e=>{if(!ready||drag||e.button!==0||!e.isPrimary)return;drag={x:e.clientX,y:e.clientY,id:e.pointerId};$('map').setPointerCapture(e.pointerId);applyMode();});
+$('map').addEventListener('pointermove',e=>{if(!drag||e.pointerId!==drag.id)return;
+ const peek=positioning.state.mode==='gps'&&positioning.state.compass==='on'&&followCompass;
+ // A sweep across 80% of the viewport covers a full circle, in either direction, without a yaw limit.
+ player.heading+=(e.clientX-drag.x)*(peek?360/Math.max(1,$('map').clientWidth*.8):.18);
+ player.pitch=Math.max(-20,Math.min(4,player.pitch-(e.clientY-drag.y)*.12));drag.x=e.clientX;drag.y=e.clientY;camera();updateUI();drawMini();start();});
+function endLook(e){if(!drag||e.pointerId!==drag.id)return;drag=null;applyMode();start();}
+for(const event of ['pointerup','pointercancel','lostpointercapture'])$('map').addEventListener(event,endLook);
 $('reset').onclick=()=>{stop();
  if(positioning.state.mode==='gps'){player.pitch=0;if(gps.target){[player.x,player.y]=gps.target;}if(positioning.state.course!==null)player.travelBearing=positioning.state.course;camera();drawMini();updateUI();start();notice(gps.target?'Snapped to the latest GPS fix.':'Waiting for a GPS fix.',2500);return;}
  Object.assign(player,{x:0,y:0,heading:38,pitch:0,travelBearing:null,chevronHeading:null});camera();drawMini();updateUI();if(!busy){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:0,y:0,heading:player.heading});}notice('Returned to the starting point.',2500);};

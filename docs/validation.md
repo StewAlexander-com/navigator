@@ -106,3 +106,9 @@ Limits: sectors are derived street-centerline faces closed by the source envelop
 ## v0.1.1 patch release
 
 Prepared 2026-09-22 with Prototypes D–F and GPS free look. Earlier deployment statements above describe their recording dates. Release validation includes 29 unit tests, production build, browser navigation/offline checks, sun alignment, streaming and free-look regression checks. GitHub Pages deployment and public-origin verification are recorded with the GitHub release. Physical-device limitations above still apply.
+
+## v0.1.2 — temporary compass look-around
+
+Recorded 2026-09-22. Compass-follow now allows an unlimited horizontal drag, with 360° across 80% of the viewport, then eases to the latest resolved phone heading on release or pointer cancellation. Sensor updates and compass-directed chevron remain active; explicit free look retains its held-view behavior. Angle deltas now wrap correctly after repeated turns in either direction.
+
+Validation: 30 unit tests passed; production build and browser navigation/offline suite passed. The free-look suite verified mouse circles both directions, a changing compass while the view is held, shortest-arc return, phone-sized browser touch circles and touch cancellation, plus existing free-look controls and graph fallbacks. Physical phone gesture feel and sensor behavior remain unverified.

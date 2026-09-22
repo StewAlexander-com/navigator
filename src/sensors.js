@@ -20,7 +20,7 @@ export const SENSORS = Object.freeze({
 
 const RAD = Math.PI / 180;
 export const normalizeHeading = h => ((h % 360) + 360) % 360;
-export const headingDelta = (from, to) => ((to - from + 540) % 360) - 180;
+export const headingDelta = (from, to) => normalizeHeading(to - from + 180) - 180;
 
 // Heading (degrees clockwise from north) of the direction the user faces.
 // The device rotation matrix follows the W3C DeviceOrientation algorithm

@@ -13,7 +13,34 @@ try{
  await compass(90);await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading-90)<.2);
  assert.equal((await diag()).viewMode,'compass');assert.equal((await diag()).metrics.stream.lookupMode,'sector graph');assert.equal(await page.locator('.controls .turn').first().isVisible(),false);
  const drag=async()=>{await page.mouse.move(600,400);await page.mouse.down();await page.mouse.move(800,400);await page.mouse.up();};
- await drag();assert.ok(Math.abs((await diag()).player.heading-90)<.2);
+ await drag();await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading-90)<.2);
+ // Full circles in both directions while held, including a changed phone heading.
+ for(const direction of [1,-1]){
+  await page.mouse.move(direction===1?100:1300,450);await page.mouse.down();
+  const initial=(await diag()).player.heading;
+  await page.mouse.move(direction===1?1300:100,450,{steps:12});
+  const held=(await diag()).player.heading;assert.ok((held-initial)*direction>360);
+  await compass(180);await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().metrics.chevron.bearing-180)<.2);
+  assert.equal((await diag()).player.heading,held);assert.equal((await diag()).sensors.rawHeading,180);
+  assert.ok(Math.abs((await diag()).metrics.chevron.bearing-180)<1);
+  await page.mouse.up();await page.waitForFunction(()=>Math.abs(((window.navigatorDiagnostics().player.heading-180+540)%360)-180)<.2);
+  await compass(90);await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading-90)<.2);
+ }
+ // Real browser touch input on a phone viewport, including cancellation.
+ await page.setViewportSize({width:390,height:844});const touch=await context.newCDPSession(page);
+ await touch.send('Emulation.setTouchEmulationEnabled',{enabled:true});
+ for(const direction of [1,-1]){
+  const initial=(await diag()).player.heading;
+  await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:direction===1?20:370,y:480}]});
+  for(let i=1;i<=10;i++)await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:direction===1?20+i*35:370-i*35,y:480}]});
+  await page.waitForFunction(({initial,direction})=>Math.abs(window.navigatorDiagnostics().player.heading-initial-direction*350*360/(390*.8))<.2,{initial,direction});
+  const held=(await diag()).player.heading;assert.ok((held-initial)*direction>360);
+  await page.waitForTimeout(300);assert.equal((await diag()).player.heading,held);
+  await touch.send('Input.dispatchTouchEvent',{type:direction===1?'touchEnd':'touchCancel',touchPoints:[]});
+  await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading-90)<.2);
+ }
+ await touch.send('Emulation.setTouchEmulationEnabled',{enabled:false});await touch.detach();await page.setViewportSize({width:1440,height:900});
+ console.log('Compass look-around: full circles both ways, held view, latest-heading return and touch release/cancel passed.');
  await page.locator('#view-mode').click();assert.equal(await page.locator('#heading-source').innerText(),'FREE LOOK');assert.equal(await page.locator('#view-mode').getAttribute('aria-pressed'),'true');assert.ok(await page.locator('.controls .turn').first().isVisible());
  await drag();let d=await diag();const freeHeading=d.player.heading;assert.ok(freeHeading>120);assert.equal(d.sensors.rawHeading,90);assert.equal(d.sensors.mode,'gps');assert.ok(Math.abs(d.metrics.chevron.bearing-90)<.2);
  await compass(180);await page.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().metrics.chevron.bearing-180)<.2);d=await diag();assert.equal(d.sensors.rawHeading,180);assert.equal(d.player.heading,freeHeading);

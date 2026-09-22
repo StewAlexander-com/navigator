@@ -70,3 +70,13 @@ test('parsing with a moved origin shifts local geometry exactly',()=>{
  assert.ok(Math.abs(pa[0]-100-pb[0])<1e-3&&Math.abs(pa[1]+50-pb[1])<1e-3);
  const back=toLocal(toLngLat(3,-7,origin),origin);assert.ok(Math.abs(back[0]-3)<1e-6&&Math.abs(back[1]+7)<1e-6);
 });
+
+test('spring-back takes the shortest arc after multiple full look-around turns',()=>{
+ for(const turns of [-10,-3,-1,0,1,3,10]){
+  const current=350+360*turns;
+  assert.equal(headingDelta(current,10),20);
+  assert.equal(headingDelta(10,current),-20);
+  const next=smoothHeading(current,10,.016);
+  assert.ok(next>350&&next<360);
+ }
+});

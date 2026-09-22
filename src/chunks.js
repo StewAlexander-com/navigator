@@ -3,7 +3,7 @@ import {createSectorLookup} from './sectors.js';
 // Prototype E: uniform spatial buckets, not the later ingest-time street-sector graph.
 export const CHUNKS=Object.freeze({size:128,active:24,prefetch:4,margin:12,vertices:9000,buildings:16,roadVertices:600});
 const distance=(b,x,y)=>Math.hypot(Math.max(b[0]-x,0,x-b[2]),Math.max(b[1]-y,0,y-b[3]));
-const bytes=g=>g.position.byteLength+g.normal.byteLength+g.uv.byteLength;
+const bytes=g=>g.position.byteLength+g.normal.byteLength+g.uv.byteLength+g.style.byteLength;
 export function createChunkIndex(world,prepared=null){
  const index=new Map();
  if(prepared){for(const c of prepared)index.set(c.id,{id:c.id,x:c.x,y:c.y,bounds:c.bounds,buildings:c.buildingIndices.map(i=>world.buildings[i]),roads:c.roadSegments.map(([r,i])=>({points:[world.roads[r].points[i],world.roads[r].points[i+1]],width:world.roads[r].width,name:world.roads[r].name,highway:world.roads[r].highway,source:[r,i]}))});return index;}
@@ -22,7 +22,7 @@ export function createChunkIndex(world,prepared=null){
 export function createChunkStream(world,graph=null){
  const index=createChunkIndex(world,graph?.chunks),lookup=graph?createSectorLookup(graph):null,cache=new Map();let loaded=0,evicted=0,hits=0,promoted=0,lastPrefetch=new Set(),lastActive=null;
  // Numeric payload estimate only; JS object/string/Map overhead is engine-dependent.
- const sourceNumericBytes=world.buildings.reduce((n,b)=>n+8*(b.rings.reduce((sum,ring)=>sum+ring.length*2,0)+5),0)+world.roads.reduce((n,road)=>n+8*(road.points.length*2+1),0);
+ const sourceNumericBytes=world.buildings.reduce((n,b)=>n+8*(b.rings.reduce((sum,ring)=>sum+ring.length*2,0)+8),0)+world.roads.reduce((n,road)=>n+8*(road.points.length*2+1),0);
  function prepare(c){
   if(cache.has(c.id)){hits++;return cache.get(c.id);}
   const geometry=buildGeometry(c,c.x,c.y,{vertices:CHUNKS.vertices,buildings:CHUNKS.buildings});
@@ -52,8 +52,8 @@ export function createChunkStream(world,graph=null){
     if(length/3+e.geometry.position.length/3>LIMITS.vertices||count+e.geometry.count>LIMITS.buildings){omitted+=e.geometry.count+e.geometry.omitted;continue;}
     entries.push(e);length+=e.geometry.position.length;count+=e.geometry.count;simplified+=e.geometry.simplified;omitted+=e.geometry.omitted;
    }
-   geometry={position:new Float32Array(length),normal:new Float32Array(length),uv:new Float32Array(length/3*2),count,simplified,omitted};
-   let at=0;for(const e of entries){geometry.position.set(e.geometry.position,at);geometry.normal.set(e.geometry.normal,at);geometry.uv.set(e.geometry.uv,at/3*2);at+=e.geometry.position.length;}
+   geometry={position:new Float32Array(length),normal:new Float32Array(length),uv:new Float32Array(length/3*2),style:new Uint8Array(length/3*2),count,simplified,omitted};
+   let at=0;for(const e of entries){geometry.position.set(e.geometry.position,at);geometry.normal.set(e.geometry.normal,at);geometry.uv.set(e.geometry.uv,at/3*2);geometry.style.set(e.geometry.style,at/3*2);at+=e.geometry.position.length;}
    roads=all.flatMap(e=>e.roads);
   }
   for(const c of ahead)prepare(c);lastPrefetch=new Set(ahead.map(c=>c.id));

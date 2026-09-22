@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.9 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.10 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -127,3 +127,17 @@ These are illustrative lighting/material cues, not current sunlight, cast buildi
 v0.1.8 separates the neutral façade pigment from warm incident sunlight, adds a broad stone highlight, and reduces amber glass/haze tint. Buildings remain cool-neutral in shade instead of brown.
 
 v0.1.9 precaches app-shell assets with a build-specific network URL and stores them under their canonical offline keys, preventing a newly installed shell from retaining stale HTML from the HTTP cache.
+
+### OSM building styles (v0.1.10)
+
+Seven procedural styles share the same mesh and shader: neutral, small home, apartments/residential, storefront, office, utility/warehouse, and civic. They vary window spacing/proportion, floor rhythm, glazing and simple wall treatment. Neutral pale materials and warm sunlight remain. Known homes use smaller spaced windows, civic façades narrow tall windows, and utility buildings broad minimally glazed walls. Tagged retail gets display glazing and a plain fascia on one nearby street-facing outer wall. A shop tag on apartments adds only the ground-floor frontage.
+
+Classification runs once when the area is parsed. Explicit building type wins; building-use, shop, office and amenity tags can resolve generic buildings. Generic commercial does not imply office. For otherwise unspecified footprints, contained residential/retail/industrial land-use polygons provide a marked inference; only in residential context do height and footprint size distinguish a small home from a larger residential building. City names, wealth, demographics and address strings are not classifiers. Unknown or unsupported types stay neutral. Explicit unusual structures are not overridden by neighborhood inference.
+
+Land-use polygons are included in the existing bounded live OSM area request, not downloaded per building. At most 128 polygons with 2,048 points each are used, including multipolygon components and excluding holes. The smallest matching polygon is preferred. Neighborhood inference uses the footprint-bounds center and can be wrong on a zoning boundary. Standalone shop POIs are not joined to buildings. Frontage checks at most 128 outer edges against 64 nearby road segments; ambiguous/distant or simplified footprints may omit the shopfront. Existing heights and footprints are preserved—no invented pitched roofs, balconies, landmarks, occupants or business signs.
+
+Each building vertex adds two unnormalized bytes: style/frontage code and quantized floor height. At the 90,000-vertex cap this is 180,000 additional bytes per active buffer (CPU and GPU copies are separate). Chunk cache and worker transfer accounting include the attribute. There are no new textures, material batches, draw calls or per-frame classification. Land-use tags can increase source-response size, which remains capped at 8 MiB. More shader branches add some GPU work; physical-phone cost remains unmeasured.
+
+Validation: 49 unit tests, a seven-style GPU fixture with unique rendered output, mixed-use frontage, browser movement/GPS/offline checks, streaming and chevron occlusion. The bundled snapshot yields 47 neutral, 26 residential, 28 retail-cued, three office, 13 utility and five civic buildings. These are visual classifications, not surveyed use guarantees. Run `npm run test:building-styles` with the dev server on port 5173.
+
+Tag semantics: [OSM building](https://wiki.openstreetmap.org/wiki/Key:building), [building use](https://wiki.openstreetmap.org/wiki/Key:building:use), [land use](https://wiki.openstreetmap.org/wiki/Key:landuse).

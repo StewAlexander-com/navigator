@@ -14,7 +14,7 @@ async function download(url, origin, fingerprint=false) {
   if(fingerprint&&globalThis.crypto?.subtle){try{sourceHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buffer)),b=>b.toString(16).padStart(2,'0')).join('');}catch{/* The index is optional; retain radius lookup. */}}
   return {parsed:parseWorld(JSON.parse(new TextDecoder().decode(buffer)),origin),size,sourceHash};
 }
-const overpassUrl=([south,west,north,east])=>'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(`[out:json][timeout:25];(way[building](${south},${west},${north},${east});relation[building](${south},${west},${north},${east});way[highway](${south},${west},${north},${east}););out geom;`);
+const overpassUrl=([south,west,north,east])=>'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(`[out:json][timeout:25];(way[building](${south},${west},${north},${east});relation[building](${south},${west},${north},${east});way[highway](${south},${west},${north},${east});way[landuse~"^(residential|retail|industrial)$"](${south},${west},${north},${east});relation[landuse~"^(residential|retail|industrial)$"](${south},${west},${north},${east}););out geom;`);
 const osmApiUrl=([south,west,north,east])=>`https://api.openstreetmap.org/api/0.6/map.json?bbox=${west},${south},${east},${north}`;
 // Live areas try Overpass, then the OSM API. Both providers reveal the bounding box to that service.
 async function downloadLive(bbox, origin) {
@@ -59,6 +59,6 @@ self.onmessage = async ({data}) => {
     }
     if(!world)throw new Error('Load an area first.');
     const result=stream.update(data.x||0,data.y||0,data.heading||0),g=result.geometry;
-    self.postMessage({type:'ready',id:data.id,x:data.x||0,y:data.y||0,heading:data.heading||0,...result,areaLoaded:data.type==='load',origin:world.origin,bbox:world.bbox,radius:world.radius,timestamp:world.timestamp,bytes,provider,ms:performance.now()-start,live:data.live||!!data.center},g?[g.position.buffer,g.normal.buffer,g.uv.buffer]:[]);
+    self.postMessage({type:'ready',id:data.id,x:data.x||0,y:data.y||0,heading:data.heading||0,...result,areaLoaded:data.type==='load',origin:world.origin,bbox:world.bbox,radius:world.radius,timestamp:world.timestamp,bytes,provider,ms:performance.now()-start,live:data.live||!!data.center},g?[g.position.buffer,g.normal.buffer,g.uv.buffer,g.style.buffer]:[]);
   }catch(error){self.postMessage({type:'error',id:data.id,message:error.message,oversized:!!error.oversized});}
 };

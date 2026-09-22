@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="UTF-8"><title>Building style rendering fixture</title><style>body{margin:0;background:#c7d6da}#map{position:absolute;inset:0}#label{position:absolute;top:12px;left:12px;background:#18343e;color:white;padding:10px;font:16px sans-serif}</style></head><body><div id="map"></div><div id="label">Synthetic style test</div><script type="module">
+import * as maplibregl from 'maplibre-gl';import 'maplibre-gl/dist/maplibre-gl.css';
+import {createWorldLayer} from '../src/renderer.js';import {buildGeometry,ORIGIN,toLngLat} from '../src/world.js';import {BUILDING_STYLES} from '../src/building-style.js';
+const player={x:0,y:-24,heading:0},metrics={renderedFrames:0};
+const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers:[]},center:ORIGIN,zoom:18,maxPitch:95,centerClampedToGround:false,interactive:false,attributionControl:false,canvasContextAttributes:{antialias:false,preserveDrawingBuffer:true}});
+map.on('load',()=>{const layer=createWorldLayer(player,metrics);map.addLayer(layer);layer.setRoads([{points:[[-60,-5],[60,-5]],width:6}]);
+ map.jumpTo(map.calculateCameraOptionsFromTo(toLngLat(0,-24),1.65,toLngLat(0,0),1.65));
+ window.renderType=(kind,mixed=false)=>new Promise(resolve=>{const b={rings:[[[-10,0],[10,0],[10,15],[-10,15]]],bounds:[-10,0,10,15],height:12,style:{kind,floorHeight:3.2},frontEdge:kind===3||mixed?0:-1};const g=buildGeometry({buildings:[b]});layer.setBuildings(g);document.querySelector('#label').textContent='Synthetic fixture · '+BUILDING_STYLES[kind]+(mixed?' + shopfront':'');map.once('render',()=>resolve({drawCalls:metrics.drawCalls,vertices:g.position.length/3,styleBytes:g.style.byteLength}));map.triggerRepaint();});
+});
+</script></body></html>

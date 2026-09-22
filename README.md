@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.4 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.5 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -104,6 +104,6 @@ The ingest step uses Shapely/GEOS to node street lines and polygonize their face
 
 ### Nearby street label
 
-A compact translucent pill floats with its lower edge 0.25 world metres above the chevron in demo and GPS modes. It uses named OSM street/path segments retained through both chunk lookup paths, selecting by player position rather than viewing direction. “Nearby” indicates proximity, not a confirmed road match or route. Small distance hysteresis reduces intersection flicker. Unnamed paths/streets and missing nearby geometry are explicit; no reverse-geocoding service or additional permission is used.
+A compact translucent pill floats centered at the camera’s 1.65 m eye level, clearly above the 0.75 m chevron in demo and GPS modes. It uses named OSM street/path segments retained through both chunk lookup paths, selecting by player position rather than viewing direction. “Nearby” indicates proximity, not a confirmed road match or route. Small distance hysteresis reduces intersection flicker. Unnamed paths/streets and missing nearby geometry are explicit; no reverse-geocoding service or additional permission is used.
 
 The pill ignores pointer input, has bounded width and text overflow, and hides when its anchor approaches the upper sightline or bottom controls. It is a screen overlay for map context; unlike the chevron, its text is not occluded by buildings. Run `npm run test:street-label` for demo/live labeling, phone bounds and drag-through checks.

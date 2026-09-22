@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export const CHEVRON = Object.freeze({distance:4.5, height:1.65, drawCalls:4});
+export const CHEVRON = Object.freeze({distance:4.5, height:.75, drawCalls:4});
 export function updateTravelBearing(player, dx, dy) {
   // Use the displacement actually accepted by the area boundary, not key intent.
   if (Math.hypot(dx,dy)>1e-5) player.travelBearing=(Math.atan2(dx,dy)*180/Math.PI+360)%360;
@@ -11,8 +11,8 @@ export function createChevron(player) {
   const shape=new THREE.Shape();
   shape.moveTo(-.85,-.48);shape.lineTo(0,.25);shape.lineTo(.85,-.48);
   shape.lineTo(.85,-.04);shape.lineTo(0,.73);shape.lineTo(-.85,-.04);shape.closePath();
-  const geometry=new THREE.ExtrudeGeometry(shape,{depth:.16,bevelEnabled:true,bevelSegments:1,steps:1,bevelSize:.035,bevelThickness:.025});
-  geometry.translate(0,0,-.08);
+  const geometry=new THREE.ExtrudeGeometry(shape,{depth:.07,bevelEnabled:true,bevelSegments:1,steps:1,bevelSize:.025,bevelThickness:.012});
+  geometry.translate(0,0,-.035);
   const bodyMaterial=new THREE.ShaderMaterial({
     vertexShader:'varying vec3 n;void main(){n=normal;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
     fragmentShader:'varying vec3 n;void main(){float light=.65+.35*abs(dot(normalize(n),normalize(vec3(-.3,-.5,1.))));gl_FragColor=vec4(vec3(.20,.96,.98)*light,.9);}',
@@ -25,13 +25,10 @@ export function createChevron(player) {
   const vertex='varying vec2 p;void main(){p=uv*vec2(2.6,2.3)-vec2(1.3,1.15);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}';
   const distance=`float segment(vec2 p,vec2 a,vec2 b){vec2 ab=b-a;return length(p-a-ab*clamp(dot(p-a,ab)/dot(ab,ab),0.,1.));}`;
   const glow=new THREE.Mesh(plane,new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:`varying vec2 p;${distance}void main(){float d=min(segment(p,vec2(-.8,-.25),vec2(0.,.48)),segment(p,vec2(0.,.48),vec2(.8,-.25)));float a=.24*exp(-d*d/ .09);if(a<.003)discard;gl_FragColor=vec4(.12,.95,1.,a);}`,transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,forceSinglePass:true,blending:THREE.AdditiveBlending}));
-  glow.position.z=-.11;glow.renderOrder=10;glow.frustumCulled=false;group.add(glow);
+  glow.position.z=-.055;glow.renderOrder=10;glow.frustumCulled=false;group.add(glow);
   const shadow=new THREE.Mesh(plane,new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:`varying vec2 p;${distance}void main(){float d=min(segment(p,vec2(-.8,-.25),vec2(0.,.48)),segment(p,vec2(0.,.48),vec2(.8,-.25)));float a=.26*exp(-d*d/.05);if(a<.003)discard;gl_FragColor=vec4(.02,.06,.07,a);}`,transparent:true,depthWrite:false,depthTest:true,side:THREE.DoubleSide,forceSinglePass:true}));
   shadow.position.z=.025-CHEVRON.height;shadow.renderOrder=9;shadow.frustumCulled=false;group.add(shadow);
-  // Tilt the glyph toward the eye so its face remains legible at eye height.
-  // The shadow stays on the ground; every component shares the world's depth buffer.
-  for(const part of [body,edges,glow])part.rotation.x=Math.PI/6;
-  glow.position.set(0,.055,-.11*Math.cos(Math.PI/6));
+  // Horizontal glyph below eye level: visible from above without tilting its plane.
   function update(){
     const view=player.heading*Math.PI/180, bearing=player.chevronHeading??player.heading;
     // Resolved compass direction is independent of an optional free-look camera.

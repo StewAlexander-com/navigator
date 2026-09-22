@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.2 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.3 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -45,7 +45,7 @@ Run `npx playwright install chromium`, start `npm run preview -- --port 4173` af
 
 ## Hovering chevron
 
-A cyan beveled chevron floats at 1.65 m eye height, 4.5 m ahead of the view, with a 30° tilt for readability. Body, edges, glow and ground shadow are depth-tested against the same building geometry as the world. It consumes the smoothed compass heading when available, including during free look; otherwise it uses manual view heading. Compass-follow uses the same smoothing for the camera. Free look changes only view direction, while retaining GPS position, compass observations and the chevron’s compass direction. GPS travel course remains separate and does not override the chevron. Prototype D can add a user-applied shadow-alignment offset to this same heading; camera fusion is deferred. This is heading indication, not route guidance or a measured travel direction. The total draw-call budget remains seven, including four for the chevron. See [Organic Maps ideas and implementation](docs/organic-maps-reference.md).
+A thin cyan chevron floats parallel to the ground at 0.75 m, 4.5 m ahead of the view. The camera remains at 1.65 m, so the horizontal glyph is visible from above. Body, edges, glow and ground shadow are depth-tested against the same building geometry as the world. It consumes the smoothed compass heading when available, including during free look; otherwise it uses manual view heading. Compass-follow uses the same smoothing for the camera. Free look changes only view direction, while retaining GPS position, compass observations and the chevron’s compass direction. GPS travel course remains separate and does not override the chevron. Prototype D can add a user-applied shadow-alignment offset to this same heading; camera fusion is deferred. This is heading indication, not route guidance or a measured travel direction. The total draw-call budget remains seven, including four for the chevron. See [Organic Maps ideas and implementation](docs/organic-maps-reference.md).
 
 ## GPS and compass (Prototype B)
 
@@ -101,3 +101,9 @@ npm run bench:sectors
 The ingest step uses Shapely/GEOS to node street lines and polygonize their faces. It runs locally/build-time, never in the PWA. `npm run build` checks the committed artifact against the snapshot; CI does not need Python or Shapely. The derived graph remains covered by the existing OSM attribution/ODbL notice. The source snapshot and supplied image remain unchanged.
 
 `npm run test:free-look` checks default compass-follow, independent drag/turn while GPS moves, unchanged raw compass readings, compass-directed chevron during free look, return to follow, mode reset when GPS stops, phone layout and stale-graph fallback. The view defaults to compass-follow on every GPS enable; manual and denied-compass behavior remain available. The performance panel distinguishes sensor bearing from the view heading.
+
+### Nearby street label
+
+A compact translucent pill floats above the chevron in demo and GPS modes. It uses named OSM street/path segments retained through both chunk lookup paths, selecting by player position rather than viewing direction. “Nearby” indicates proximity, not a confirmed road match or route. Small distance hysteresis reduces intersection flicker. Unnamed paths/streets and missing nearby geometry are explicit; no reverse-geocoding service or additional permission is used.
+
+The pill ignores pointer input, has bounded width and text overflow, and hides when its anchor approaches the upper sightline or bottom controls. It is a screen overlay for map context; unlike the chevron, its text is not occluded by buildings. Run `npm run test:street-label` for demo/live labeling, phone bounds and drag-through checks.

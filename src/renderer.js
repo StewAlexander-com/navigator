@@ -29,8 +29,9 @@ void main(){
  float haze=smoothstep(radius*.25,radius*.94,d);
  gl_FragColor=vec4(mix(color,fog,haze),1.);
 }`;
-export function createWorldLayer(player, metrics) {
+export function createWorldLayer(player, metrics, onChevronAnchor=null) {
   let renderer, scene, camera, building, ground, roads, map, chevron;
+  const anchor=new THREE.Vector4();
   const eye=new THREE.Vector2(), projection=new THREE.Matrix4(), localMatrix=new THREE.Matrix4();
   // Local metres → Mercator. Re-anchoring a GPS area moves the origin; geometry arrives already relative to it.
   function setOrigin(origin){const mc=maplibregl.MercatorCoordinate.fromLngLat(origin), s=mc.meterInMercatorCoordinateUnits();localMatrix.makeTranslation(mc.x,mc.y,0).scale(new THREE.Vector3(s,-s,s));map?.triggerRepaint();}
@@ -69,6 +70,10 @@ export function createWorldLayer(player, metrics) {
       chevron.update();
       projection.fromArray(args.defaultProjectionData.mainMatrix);
       camera.projectionMatrix.copy(projection).multiply(localMatrix);
+      if(onChevronAnchor){
+        anchor.set(chevron.group.position.x,chevron.group.position.y,chevron.group.position.z,1).applyMatrix4(camera.projectionMatrix);
+        onChevronAnchor({x:(anchor.x/anchor.w+1)*map.getCanvas().clientWidth/2,y:(1-anchor.y/anchor.w)*map.getCanvas().clientHeight/2,visible:anchor.w>0&&Math.abs(anchor.x)<anchor.w&&Math.abs(anchor.y)<anchor.w});
+      }
       renderer.resetState();renderer.render(scene,camera);
       metrics.drawCalls=renderer.info.render.calls;metrics.triangles=renderer.info.render.triangles;metrics.renderedFrames++;
       metrics.chevron.bearing=player.chevronHeading??player.heading;

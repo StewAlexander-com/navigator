@@ -6,7 +6,7 @@ const distance=(b,x,y)=>Math.hypot(Math.max(b[0]-x,0,x-b[2]),Math.max(b[1]-y,0,y
 const bytes=g=>g.position.byteLength+g.normal.byteLength+g.uv.byteLength;
 export function createChunkIndex(world,prepared=null){
  const index=new Map();
- if(prepared){for(const c of prepared)index.set(c.id,{id:c.id,x:c.x,y:c.y,bounds:c.bounds,buildings:c.buildingIndices.map(i=>world.buildings[i]),roads:c.roadSegments.map(([r,i])=>({points:[world.roads[r].points[i],world.roads[r].points[i+1]],width:world.roads[r].width,source:[r,i]}))});return index;}
+ if(prepared){for(const c of prepared)index.set(c.id,{id:c.id,x:c.x,y:c.y,bounds:c.bounds,buildings:c.buildingIndices.map(i=>world.buildings[i]),roads:c.roadSegments.map(([r,i])=>({points:[world.roads[r].points[i],world.roads[r].points[i+1]],width:world.roads[r].width,name:world.roads[r].name,highway:world.roads[r].highway,source:[r,i]}))});return index;}
  function bucket(bounds){
   const cx=Math.floor((bounds[0]+bounds[2])/2/CHUNKS.size),cy=Math.floor((bounds[1]+bounds[3])/2/CHUNKS.size),id=`${cx}:${cy}`;
   let c=index.get(id);if(!c){c={id,x:(cx+.5)*CHUNKS.size,y:(cy+.5)*CHUNKS.size,bounds:[...bounds],buildings:[],roads:[]};index.set(id,c);}
@@ -15,7 +15,7 @@ export function createChunkIndex(world,prepared=null){
  for(const b of world.buildings)bucket(b.bounds).buildings.push(b);
  for(const [roadIndex,road] of world.roads.entries())for(let i=1;i<road.points.length;i++){
   const a=road.points[i-1],b=road.points[i],half=road.width/2;
-  bucket([Math.min(a[0],b[0])-half,Math.min(a[1],b[1])-half,Math.max(a[0],b[0])+half,Math.max(a[1],b[1])+half]).roads.push({points:[a,b],width:road.width,source:[roadIndex,i-1]});
+  bucket([Math.min(a[0],b[0])-half,Math.min(a[1],b[1])-half,Math.max(a[0],b[0])+half,Math.max(a[1],b[1])+half]).roads.push({points:[a,b],width:road.width,name:road.name,highway:road.highway,source:[roadIndex,i-1]});
  }
  return index;
 }

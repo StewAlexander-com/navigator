@@ -112,3 +112,9 @@ Prepared 2026-09-22 with Prototypes D–F and GPS free look. Earlier deployment 
 Recorded 2026-09-22. Compass-follow now allows an unlimited horizontal drag, with 360° across 80% of the viewport, then eases to the latest resolved phone heading on release or pointer cancellation. Sensor updates and compass-directed chevron remain active; explicit free look retains its held-view behavior. Angle deltas now wrap correctly after repeated turns in either direction.
 
 Validation: 30 unit tests passed; production build and browser navigation/offline suite passed. The free-look suite verified mouse circles both directions, a changing compass while the view is held, shortest-arc return, phone-sized browser touch circles and touch cancellation, plus existing free-look controls and graph fallbacks. Physical phone gesture feel and sensor behavior remain unverified.
+
+## v0.1.3 — level chevron and nearby street pill
+
+Recorded 2026-09-22. The chevron is parallel to the ground, with a 0.75 m hover height and thinner extrusion beneath the unchanged 1.65 m camera. A bounded translucent DOM pill projects above it; OSM names/types survive uniform and prepared-sector chunks. Nearby segment selection uses position and 3 m intersection hysteresis, with explicit unnamed/distant fallbacks. The label ignores pointer input and hides near the upper sightline and bottom controls. It is screen-overlay map context, not a depth-occluded route marker or confirmed road match.
+
+32 unit tests passed, including horizontal transforms, road-name preservation, proximity and hysteresis. Browser checks verified South Spring Street in demo and simulated GPS modes, phone bounds, gestures starting on the pill, chevron GPU occlusion, full-circle spring-back, existing free look, navigation and offline labels. No browser errors; seven draw calls retained. Desktop and 390 × 844 screenshots inspected. Physical-device readability and sensor behavior remain unverified.

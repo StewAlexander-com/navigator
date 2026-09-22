@@ -6,6 +6,7 @@ import {createPositioning} from './positioning.js';
 import {createSunCheck} from './sun-check.js';
 import {smoothHeading, smoothPosition, headingDelta, areaCovers, SENSORS} from './sensors.js';
 import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition} from './world.js';
+import {nearestStreet} from './street-label.js';
 import './style.css';
 
 const $=id=>document.getElementById(id);
@@ -17,6 +18,7 @@ const area={origin:ORIGIN,bbox:BBOX,live:false,radius:null,provider:'Bundled OSM
 // GPS target pose. The render loop eases the player toward `target`; `rawHeading` is the latest compass reading.
 let sunCheck;
 let followCompass=true;
+let street=null,labelPosition=null,labelRoads=null;
 const gps={target:null,rawHeading:null,failedAt:-Infinity};
 const metrics={renderedFrames:0,drawCalls:0,vertices:0,triangles:0,buildings:0,geometryBytes:0,roadVertices:0,frameMs:null,fps:null,queryMs:null,responseBytes:null};
 const keys=new Set();let ready=false,worldLayer,roads=[],busy=false,lastBuild=[0,0],lastStreamHeading=38,requestId=0,frameId=0,lastTime=0,uiTime=0,noticeTimer,drag=null,offlineReady=false;
@@ -28,7 +30,10 @@ function request({live=false,center=null,radius=null}={}){if(busy)return false;b
 const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#b0bfc9'}}]},center:ORIGIN,zoom:18,pitch:90,maxPitch:95,centerClampedToGround:false,interactive:false,attributionControl:false,pixelRatio:Math.min(devicePixelRatio,1.5),maxTileCacheSize:16,renderWorldCopies:false,canvasContextAttributes:{antialias:false,preserveDrawingBuffer:false}});
 function fitView(){map.setVerticalFieldOfView(innerWidth<700?65:45);if(ready)camera();}
 fitView();addEventListener('resize',fitView);
-map.on('load',()=>{worldLayer=createWorldLayer(player,metrics);map.addLayer(worldLayer);camera();request();});
+map.on('load',()=>{worldLayer=createWorldLayer(player,metrics,anchor=>{
+ const pill=$('street-pill');pill.hidden=!anchor.visible||anchor.y-74<innerHeight*.35||anchor.y-26>innerHeight-170;
+ pill.style.left=anchor.x+'px';pill.style.top=(anchor.y-26)+'px';
+});map.addLayer(worldLayer);camera();request();});
 map.on('error',e=>{console.error(e.error);notice('The 3D view encountered an error. Reload to try again.');});
 map.getCanvas().addEventListener('webglcontextlost',e=>{e.preventDefault();stop();notice('Graphics context lost. Reload the page to restore this area.');});
 function camera(){const h=player.heading*Math.PI/180,eye=toLngLat(player.x,player.y,area.origin),ahead=toLngLat(player.x+Math.sin(h)*20,player.y+Math.cos(h)*20,area.origin);map.jumpTo(map.calculateCameraOptionsFromTo(eye,1.65,ahead,1.65+Math.tan(player.pitch*Math.PI/180)*20));}
@@ -98,7 +103,13 @@ function applyMode(){
  if(!live)applyMode.warned=false;
  updateUI();
 }
-function updateUI(){const h=(player.heading%360+360)%360;const [lng,lat]=toLngLat(player.x,player.y,area.origin),s=positioning.state;$('heading').textContent=String(Math.round(h)%360).padStart(3,'0')+'°';$('cardinal').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(h/45)%8];$('coordinates').textContent=`${Math.abs(lat).toFixed(5)}° ${lat<0?'S':'N'}  ${Math.abs(lng).toFixed(5)}° ${lng<0?'W':'E'}`;$('fps').textContent=metrics.fps?`${metrics.fps.toFixed(0)} fps`:'idle';
+function updateStreetLabel(){
+ if(labelRoads===roads&&labelPosition&&Math.hypot(player.x-labelPosition.x,player.y-labelPosition.y)<.75)return;
+ street=nearestStreet(roads,player,labelRoads===roads?street:null);labelRoads=roads;labelPosition={x:player.x,y:player.y};
+ $('street-kind').textContent=street?.kind||'MAP CONTEXT';$('street-name').textContent=street?.name||'No nearby mapped street';
+ $('street-pill').title=street?.name||'No nearby mapped street';
+}
+function updateUI(){updateStreetLabel();const h=(player.heading%360+360)%360;const [lng,lat]=toLngLat(player.x,player.y,area.origin),s=positioning.state;$('heading').textContent=String(Math.round(h)%360).padStart(3,'0')+'°';$('cardinal').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(h/45)%8];$('coordinates').textContent=`${Math.abs(lat).toFixed(5)}° ${lat<0?'S':'N'}  ${Math.abs(lng).toFixed(5)}° ${lng<0?'W':'E'}`;$('fps').textContent=metrics.fps?`${metrics.fps.toFixed(0)} fps`:'idle';
  const entries=[['Frame interval',metrics.frameMs?`${metrics.frameMs.toFixed(1)} ms`:'Move to measure'],['World draw calls',`${metrics.drawCalls} / 7`],['Building vertices',`${metrics.vertices.toLocaleString()} / 90,000`],['Road vertices',`${metrics.roadVertices.toLocaleString()} / 18,000`],['Loaded buildings',`${metrics.buildings} / 160`],['Chunks active / ahead',metrics.stream?`${metrics.stream.active} / ${metrics.stream.prefetched}`:'—'],['Resident chunks',metrics.stream?`${metrics.stream.resident} / 28`:'—'],['Cached building buffers',metrics.stream?`${(metrics.stream.cacheBytes/1048576).toFixed(2)} MiB`:'—'],['Geometry estimate',metrics.stream?`${(metrics.stream.geometryEstimateBytes/1048576).toFixed(2)} MiB`:'—'],['Evicted / promoted',metrics.stream?`${metrics.stream.evicted} / ${metrics.stream.promoted}`:'—'],['Lookup',metrics.stream?.lookupMode||'—'],['Sectors visited',metrics.stream?`${metrics.stream.sectorsVisited} / ${metrics.stream.sectorCount}`:'—'],['Candidate chunks',metrics.stream?`${metrics.stream.candidateChunks} / ${metrics.stream.indexed}`:'—'],['Lookup time',metrics.stream?`${metrics.stream.lookupMs.toFixed(3)} ms`:'—'],['Sector graph bytes',metrics.stream?`${(metrics.stream.graphBytes/1024).toFixed(1)} KiB`:'—'],['Chunk update',metrics.stream?`${metrics.stream.queryMs.toFixed(2)} ms`:'—'],['Disposed meshes',String(metrics.disposedBuffers||0)],['Omitted buildings / chunks',`${metrics.omitted||0} / ${metrics.stream?.omittedChunks||0}`],['Source coordinate estimate',metrics.stream?`${(metrics.stream.sourceNumericBytes/1048576).toFixed(2)} MiB`:'—'],['Geometry buffers',`${(metrics.geometryBytes/1048576).toFixed(2)} MiB`],['Fetch + worker processing',metrics.queryMs?`${metrics.queryMs.toFixed(0)} ms`:'—'],['OSM response',metrics.responseBytes?`${(metrics.responseBytes/1048576).toFixed(2)} MiB`:'—'],['Loaded area',area.radius?`${area.radius*2} m square · ${area.provider}`:'Fixed LA box · '+area.provider],['JS heap',performance.memory?`${(performance.memory.usedJSHeapSize/1048576).toFixed(1)} MiB`:'Unavailable'],['GPU memory','Unavailable'],
   ['GPS accuracy',s.mode!=='gps'?'Sensors off':s.accuracy!==null?`±${s.accuracy.toFixed(0)} m · ${s.fixes.accepted} used / ${s.fixes.rejected} rejected${s.fixes.lastReason&&s.fixes.lastReason!=='ok'?' ('+s.fixes.lastReason+')':''}`:'Waiting for fix'],['Fix interval',s.fixIntervalMs?`${s.fixIntervalMs.toFixed(0)} ms`:'—'],['Compass bearing',s.rawHeading===null?'—':`${s.rawHeading.toFixed(1)}° (sensor)`],['Compass',s.mode!=='gps'?'Off':s.compass==='on'?(s.compassAccuracy!==null?`±${s.compassAccuracy.toFixed(0)}° · ${s.headingEvents} events`:`${s.headingEvents} events · accuracy not reported`):s.compass]];
  $('measurements').replaceChildren(...entries.flatMap(([label,value])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;return[dt,dd];}));}
@@ -156,4 +167,4 @@ let installPrompt;addEventListener('beforeinstallprompt',e=>{e.preventDefault();
 if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;$('offline-status').textContent='App and bundled area are ready offline. Live and GPS areas last only for this session. iPhone: Share → Add to Home Screen.';}).catch(()=>{$('offline-status').textContent='Offline setup failed. Keep this tab online and reload to retry.';});}else $('offline-status').textContent='Offline caching is enabled in the production build.';
 applyMode();
 // Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype E.
-window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});
+window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

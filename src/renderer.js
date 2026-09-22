@@ -13,30 +13,32 @@ varying vec3 local; varying vec3 norm; varying vec2 facade;
 float grain(vec2 p){vec3 q=fract(vec3(p.xyx)*.1031);q+=dot(q,q.yzx+33.33);return fract((q.x+q.y)*q.z);}
 void main(){
  float d=distance(local.xy,eye);if(d>radius)discard;
- vec3 fog=vec3(.90,.80,.66);
+ vec3 fog=vec3(.90,.85,.77);
  vec3 sun=normalize(vec3(-.65,-.35,.48));
  vec3 view=normalize(vec3(eye,1.65)-local);
  vec3 color;
  if(kind<.5){
   vec3 n=normalize(norm);
   float light=max(dot(n,sun),0.);
-  // Warm limestone, soft blue skylight on shaded faces, honey on sun-facing walls.
-  vec3 illumination=vec3(.57,.64,.70)+vec3(.53,.35,.14)*light;
-  color=vec3(.80,.68,.51)*illumination;
+  // Neutral stone: warmth comes from incident sunlight, not a brown base pigment.
+  vec3 illumination=vec3(.65,.69,.75)+vec3(.38,.31,.20)*light;
+  color=vec3(.83,.84,.85)*illumination;
+  float stoneHighlight=pow(max(dot(n,normalize(sun+view)),0.),20.)*light;
+  color+=vec3(.16,.14,.10)*stoneHighlight;
   color*=mix(.72,1.,smoothstep(0.,5.,local.z));
   if(abs(n.z)<.5){
    vec2 cell=fract(facade/vec2(3.4,3.2));
    float window=step(.19,cell.x)*step(cell.x,.73)*step(.22,cell.y)*step(cell.y,.79)*step(1.,local.z);
    float frame=step(.15,cell.x)*step(cell.x,.77)*step(.18,cell.y)*step(cell.y,.83)*step(1.,local.z);
-   color=mix(color,vec3(.93,.82,.64)*illumination,frame);
+   color=mix(color,vec3(.92,.93,.94)*illumination,frame);
    // An analytic sky/ground environment creates angle-dependent glass, not scene reflections.
    vec3 reflected=reflect(-view,n);
    float sky=smoothstep(-.12,.65,reflected.z);
    vec3 glass=mix(vec3(.18,.24,.27),vec3(.59,.72,.78),sky);
    float fresnel=1.-max(dot(n,view),0.);fresnel*=fresnel;
-   glass=mix(glass,vec3(.87,.74,.53),.24*fresnel);
+   glass=mix(glass,vec3(.94,.88,.74),.16*fresnel*light);
    float glint=pow(max(dot(reflected,sun),0.),24.);
-   glass+=vec3(.70,.40,.12)*glint;
+   glass+=vec3(.85,.70,.45)*glint;
    // Recessed top edge gives each pane depth without geometry or shadow sampling.
    glass*=mix(.76,1.,smoothstep(.22,.34,cell.y));
    color=mix(color,glass,window);

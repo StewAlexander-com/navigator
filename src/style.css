@@ -24,3 +24,5 @@
 
 /* Painted once behind the transparent sky: cool zenith and a warm afternoon horizon. */
 #map{background:linear-gradient(180deg,#7197ac 0%,#b7cbd0 28%,#f2d3a4 53%,#f2d3a4 100%)}
+
+.area{text-shadow:0 1px 3px #132d38b3}

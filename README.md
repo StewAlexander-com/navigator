@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.7 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.8 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -120,6 +120,8 @@ Run `npm run test:road-cache` against production preview for installation, real 
 
 ### Autumn afternoon materials (v0.1.7)
 
-Warm limestone, honey-colored directional light, cooler shaded faces and a blue-to-gold sky replace the gray scene. Glass uses an analytic sky/ground reflection, a grazing-angle tint and a compact sun highlight; recessed pane edges and base shading add depth. Roads use a restrained grazing sheen and distance/footprint-filtered aggregate grain. The sky is a static CSS gradient behind the transparent canvas.
+Neutral pale stone, warm directional highlights, cooler shaded faces and a blue-to-gold sky replace the gray scene. Glass uses an analytic sky/ground reflection, a grazing-angle tint and a compact sun highlight; recessed pane edges and base shading add depth. Roads use a restrained grazing sheen and distance/footprint-filtered aggregate grain. The sky is a static CSS gradient behind the transparent canvas.
 
 These are illustrative lighting/material cues, not current sunlight, cast building shadows or reflections of actual nearby geometry. The compass and explicit Sun cross-check remain independent. No textures, texture downloads, extra meshes, shadow maps, reflection buffers or post-processing passes are added. The seven world/chevron draw calls and geometry caps are unchanged; fragment shader math increases modestly. Physical-phone GPU cost remains unmeasured. Browser movement/offline/GPS, street-label and GPU chevron-occlusion checks pass.
+
+v0.1.8 separates the neutral façade pigment from warm incident sunlight, adds a broad stone highlight, and reduces amber glass/haze tint. Buildings remain cool-neutral in shade instead of brown.

@@ -1,7 +1,8 @@
+import {launchTestBrowser} from './test-browser.mjs';
 import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-const browser=await chromium.launch({headless:true});
+const browser=await launchTestBrowser();
 try{
  const home={latitude:34.0510824,longitude:-118.2462058,accuracy:8};
  const context=await browser.newContext({viewport:{width:1440,height:900},geolocation:home,permissions:['geolocation']});const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));

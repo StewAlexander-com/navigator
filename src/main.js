@@ -7,6 +7,7 @@ import {createSunCheck} from './sun-check.js';
 import {smoothHeading, smoothPosition, headingDelta, areaCovers, SENSORS} from './sensors.js';
 import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition} from './world.js';
 import {nearestStreet} from './street-label.js';
+import {distance as roadDistance} from './road-packages.js';
 import './style.css';
 
 const $=id=>document.getElementById(id);
@@ -19,6 +20,28 @@ const area={origin:ORIGIN,bbox:BBOX,live:false,radius:null,provider:'Bundled OSM
 let sunCheck;
 let followCompass=true;
 let street=null,labelPosition=null,labelRoads=null;
+let roadWorker=null,cacheRoads=null,baseRoads=[],lastRoadPoint=null,roadCacheState={phase:'starting',complete:0,total:0,bytes:0};
+let roadCacheEnabled=true;try{roadCacheEnabled=localStorage.getItem('navigator-roads-enabled')!=='false';}catch{}
+function showRoadCache(){
+ const r=roadCacheState,summary=roadCacheEnabled?`Roads · ${r.complete||0}/${r.total||0} areas · ${((r.bytes||0)/1048576).toFixed(1)} MiB · ${r.phase}`:'Road downloads paused';
+ $('road-cache-status').textContent=summary;$('road-cache-detail').textContent=`${summary}. ${r.message||'25-mile target; downloads and coverage may be incomplete. Roads are stored on this device.'}`;
+ $('road-cache-toggle').textContent=roadCacheEnabled?'Pause road downloads':'Resume road downloads';
+}
+function useRoads(){roads=cacheRoads?.length?cacheRoads:baseRoads;if(worldLayer&&ready)worldLayer.setRoads(roads);labelRoads=null;}
+function sendRoadPosition(force=false){
+ if(!roadWorker||!ready)return;const point=positioning.state.mode==='gps'&&positioning.state.lastFix?[positioning.state.lastFix.lng,positioning.state.lastFix.lat]:toLngLat(player.x,player.y,area.origin);
+ if(!force&&lastRoadPoint&&roadDistance(lastRoadPoint,point)<25)return;
+ lastRoadPoint=point;roadWorker.postMessage({type:'position',point,origin:area.origin,mode:positioning.state.mode==='gps'||area.live?'gps':'demo',force});
+}
+function startRoadCache(){
+ if(roadWorker&&roadCacheState.phase==='shared cache'){roadWorker.terminate();roadWorker=null;}
+ if(roadWorker){roadWorker.postMessage({type:'resume'});sendRoadPosition(true);return;}
+ roadWorker=new Worker(new URL('./roads.worker.js',import.meta.url),{type:'module'});
+ roadWorker.onmessage=({data})=>{if(data.type==='status'){roadCacheState=data;showRoadCache();}else if(data.type==='roads'&&data.origin.join()===area.origin.join()){cacheRoads=data.roads;useRoads();updateUI();drawMini();map.triggerRepaint();}else if(data.type==='cleared'){roadWorker.terminate();roadWorker=null;cacheRoads=null;useRoads();roadCacheState={phase:'cleared'};showRoadCache();updateUI();}};
+ roadWorker.onerror=()=>{roadCacheState={phase:'unavailable',message:'Road storage failed. The current scene remains available.'};showRoadCache();};
+ if(!roadCacheEnabled)roadWorker.postMessage({type:'pause'});sendRoadPosition();
+}
+
 const gps={target:null,rawHeading:null,failedAt:-Infinity};
 const metrics={renderedFrames:0,drawCalls:0,vertices:0,triangles:0,buildings:0,geometryBytes:0,roadVertices:0,frameMs:null,fps:null,queryMs:null,responseBytes:null};
 const keys=new Set();let ready=false,worldLayer,roads=[],busy=false,lastBuild=[0,0],lastStreamHeading=38,requestId=0,frameId=0,lastTime=0,uiTime=0,noticeTimer,drag=null,offlineReady=false;
@@ -42,7 +65,7 @@ const positioning=createPositioning({
   gps.target=toLocal([fix.lng,fix.lat],area.origin);
   if(course!==null)player.travelBearing=course;
   if(positioning.state.fixes.accepted===1){[player.x,player.y]=gps.target;camera();notice(`Location found (±${Math.round(fix.accuracy)} m). ${positioning.state.compass==='on'?'Turn to look around.':'Drag to look around.'}`,6000);}
-  ensureAreaCovers(fix);start();
+  ensureAreaCovers(fix);sendRoadPosition();start();
  },
  onHeading(){gps.rawHeading=positioning.state.rawHeading;sunCheck?.onHeading();const target=sunCheck?.heading(gps.rawHeading)??gps.rawHeading;if(Math.abs(headingDelta(player.chevronHeading??player.heading,target))>SENSORS.idleHeading||(followCompass&&!drag&&Math.abs(headingDelta(player.heading,target))>SENSORS.idleHeading))start();},
  onError(kind){notice(kind==='denied'?'Location permission was denied. Manual exploration continues.':kind==='unavailable'?'Location is unavailable right now. Waiting for a fix…':'No location fix yet. Move to open sky or wait.',6000);},
@@ -62,7 +85,7 @@ function reanchor(origin,bbox){
  const targetLL=gps.target?toLngLat(...gps.target,area.origin):null;
  area.origin=origin;area.bbox=bbox;
  [player.x,player.y]=toLocal(ll,origin);if(targetLL)gps.target=toLocal(targetLL,origin);
- worldLayer.setOrigin(origin);
+ worldLayer.setOrigin(origin);cacheRoads=null;lastRoadPoint=null;sendRoadPosition();
 }
 worker.onmessage=({data})=>{
  if(data.id!==requestId)return;busy=false;$('refresh').disabled=false;
@@ -73,11 +96,11 @@ worker.onmessage=({data})=>{
   $('area-name').textContent=data.radius?'Live area around you':'Downtown Los Angeles';
   $('data-state').textContent=`${data.live?'Live '+data.provider:'Bundled OSM'} · ${data.timestamp?data.timestamp.slice(0,10):data.radius?'this session':'fixed LA area'}${data.radius?` · ${data.radius*2} m square`:''}`;
  }
- if(data.roads){roads=data.roads;worldLayer.setRoads(roads);}
+ if(data.roads){baseRoads=data.roads;roads=cacheRoads?.length?cacheRoads:baseRoads;worldLayer.setRoads(roads);}
  if(data.geometry)worldLayer.setBuildings(data.geometry);metrics.stream=data.stream;lastBuild=[data.x,data.y];lastStreamHeading=data.heading;
  if(Math.hypot(player.x-data.x,player.y-data.y)>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  metrics.queryMs=data.ms;
- if(!ready){metrics.firstViewMs=performance.now()-started;ready=true;notice('Drag to look. Use the arrows or W A S D to explore, or enable your location.',7000);}
+ if(!ready){metrics.firstViewMs=performance.now()-started;ready=true;startRoadCache();showRoadCache();notice('Drag to look. Use the arrows or W A S D to explore, or enable your location.',7000);}
  else if(data.areaLoaded)notice(data.radius?`OpenStreetMap area loaded around you (${data.provider}).`:'OpenStreetMap area refreshed for this session.',5000);
  updateUI();drawMini();camera();if(positioning.state.mode==='gps')start();
 };
@@ -104,13 +127,14 @@ function applyMode(){
  updateUI();
 }
 function updateStreetLabel(){
+ sendRoadPosition();
  if(labelRoads===roads&&labelPosition&&Math.hypot(player.x-labelPosition.x,player.y-labelPosition.y)<.75)return;
  street=nearestStreet(roads,player,labelRoads===roads?street:null);labelRoads=roads;labelPosition={x:player.x,y:player.y};
- $('street-kind').textContent=street?.kind||'MAP CONTEXT';$('street-name').textContent=street?.name||'No nearby mapped street';
- $('street-pill').title=street?.name||'No nearby mapped street';
+ $('street-kind').textContent=street?.kind||'STREET';$('street-name').textContent=street?.name||'Street not identified';
+ $('street-pill').title=street?.name||'Street not identified';
 }
 function updateUI(){updateStreetLabel();const h=(player.heading%360+360)%360;const [lng,lat]=toLngLat(player.x,player.y,area.origin),s=positioning.state;$('heading').textContent=String(Math.round(h)%360).padStart(3,'0')+'°';$('cardinal').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(h/45)%8];$('coordinates').textContent=`${Math.abs(lat).toFixed(5)}° ${lat<0?'S':'N'}  ${Math.abs(lng).toFixed(5)}° ${lng<0?'W':'E'}`;$('fps').textContent=metrics.fps?`${metrics.fps.toFixed(0)} fps`:'idle';
- const entries=[['Frame interval',metrics.frameMs?`${metrics.frameMs.toFixed(1)} ms`:'Move to measure'],['World draw calls',`${metrics.drawCalls} / 7`],['Building vertices',`${metrics.vertices.toLocaleString()} / 90,000`],['Road vertices',`${metrics.roadVertices.toLocaleString()} / 18,000`],['Loaded buildings',`${metrics.buildings} / 160`],['Chunks active / ahead',metrics.stream?`${metrics.stream.active} / ${metrics.stream.prefetched}`:'—'],['Resident chunks',metrics.stream?`${metrics.stream.resident} / 28`:'—'],['Cached building buffers',metrics.stream?`${(metrics.stream.cacheBytes/1048576).toFixed(2)} MiB`:'—'],['Geometry estimate',metrics.stream?`${(metrics.stream.geometryEstimateBytes/1048576).toFixed(2)} MiB`:'—'],['Evicted / promoted',metrics.stream?`${metrics.stream.evicted} / ${metrics.stream.promoted}`:'—'],['Lookup',metrics.stream?.lookupMode||'—'],['Sectors visited',metrics.stream?`${metrics.stream.sectorsVisited} / ${metrics.stream.sectorCount}`:'—'],['Candidate chunks',metrics.stream?`${metrics.stream.candidateChunks} / ${metrics.stream.indexed}`:'—'],['Lookup time',metrics.stream?`${metrics.stream.lookupMs.toFixed(3)} ms`:'—'],['Sector graph bytes',metrics.stream?`${(metrics.stream.graphBytes/1024).toFixed(1)} KiB`:'—'],['Chunk update',metrics.stream?`${metrics.stream.queryMs.toFixed(2)} ms`:'—'],['Disposed meshes',String(metrics.disposedBuffers||0)],['Omitted buildings / chunks',`${metrics.omitted||0} / ${metrics.stream?.omittedChunks||0}`],['Source coordinate estimate',metrics.stream?`${(metrics.stream.sourceNumericBytes/1048576).toFixed(2)} MiB`:'—'],['Geometry buffers',`${(metrics.geometryBytes/1048576).toFixed(2)} MiB`],['Fetch + worker processing',metrics.queryMs?`${metrics.queryMs.toFixed(0)} ms`:'—'],['OSM response',metrics.responseBytes?`${(metrics.responseBytes/1048576).toFixed(2)} MiB`:'—'],['Loaded area',area.radius?`${area.radius*2} m square · ${area.provider}`:'Fixed LA box · '+area.provider],['JS heap',performance.memory?`${(performance.memory.usedJSHeapSize/1048576).toFixed(1)} MiB`:'Unavailable'],['GPU memory','Unavailable'],
+ const entries=[['Frame interval',metrics.frameMs?`${metrics.frameMs.toFixed(1)} ms`:'Move to measure'],['World draw calls',`${metrics.drawCalls} / 7`],['Building vertices',`${metrics.vertices.toLocaleString()} / 90,000`],['Road vertices',`${metrics.roadVertices.toLocaleString()} / 18,000`],['Loaded buildings',`${metrics.buildings} / 160`],['Chunks active / ahead',metrics.stream?`${metrics.stream.active} / ${metrics.stream.prefetched}`:'—'],['Resident chunks',metrics.stream?`${metrics.stream.resident} / 28`:'—'],['Cached building buffers',metrics.stream?`${(metrics.stream.cacheBytes/1048576).toFixed(2)} MiB`:'—'],['Geometry estimate',metrics.stream?`${(metrics.stream.geometryEstimateBytes/1048576).toFixed(2)} MiB`:'—'],['Evicted / promoted',metrics.stream?`${metrics.stream.evicted} / ${metrics.stream.promoted}`:'—'],['Lookup',metrics.stream?.lookupMode||'—'],['Sectors visited',metrics.stream?`${metrics.stream.sectorsVisited} / ${metrics.stream.sectorCount}`:'—'],['Candidate chunks',metrics.stream?`${metrics.stream.candidateChunks} / ${metrics.stream.indexed}`:'—'],['Lookup time',metrics.stream?`${metrics.stream.lookupMs.toFixed(3)} ms`:'—'],['Sector graph bytes',metrics.stream?`${(metrics.stream.graphBytes/1024).toFixed(1)} KiB`:'—'],['Chunk update',metrics.stream?`${metrics.stream.queryMs.toFixed(2)} ms`:'—'],['Disposed meshes',String(metrics.disposedBuffers||0)],['Omitted buildings / chunks',`${metrics.omitted||0} / ${metrics.stream?.omittedChunks||0}`],['Source coordinate estimate',metrics.stream?`${(metrics.stream.sourceNumericBytes/1048576).toFixed(2)} MiB`:'—'],['Geometry buffers',`${(metrics.geometryBytes/1048576).toFixed(2)} MiB`],['Fetch + worker processing',metrics.queryMs?`${metrics.queryMs.toFixed(0)} ms`:'—'],['OSM response',metrics.responseBytes?`${(metrics.responseBytes/1048576).toFixed(2)} MiB`:'—'],['Loaded area',area.radius?`${area.radius*2} m square · ${area.provider}`:'Fixed LA box · '+area.provider],['JS heap',performance.memory?`${(performance.memory.usedJSHeapSize/1048576).toFixed(1)} MiB`:'Unavailable'],['GPU memory','Unavailable'],['Road package state',roadCacheState.phase],['Road packages',`${roadCacheState.complete||0} / ${roadCacheState.total||0}`],['Local road storage',`${((roadCacheState.bytes||0)/1048576).toFixed(2)} / 128 MiB`],['Cached road segments',`${roadCacheState.activeSegments||0} / 2400`],['Road packages evicted',String(roadCacheState.evicted||0)],
   ['GPS accuracy',s.mode!=='gps'?'Sensors off':s.accuracy!==null?`±${s.accuracy.toFixed(0)} m · ${s.fixes.accepted} used / ${s.fixes.rejected} rejected${s.fixes.lastReason&&s.fixes.lastReason!=='ok'?' ('+s.fixes.lastReason+')':''}`:'Waiting for fix'],['Fix interval',s.fixIntervalMs?`${s.fixIntervalMs.toFixed(0)} ms`:'—'],['Compass bearing',s.rawHeading===null?'—':`${s.rawHeading.toFixed(1)}° (sensor)`],['Compass',s.mode!=='gps'?'Off':s.compass==='on'?(s.compassAccuracy!==null?`±${s.compassAccuracy.toFixed(0)}° · ${s.headingEvents} events`:`${s.headingEvents} events · accuracy not reported`):s.compass]];
  $('measurements').replaceChildren(...entries.flatMap(([label,value])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;return[dt,dd];}));}
 function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min((now-lastTime)/1000,.05);const interval=now-lastTime;lastTime=now;
@@ -141,7 +165,7 @@ function start(){if(!frameId&&ready){lastTime=performance.now();frameId=requestA
 function stop(){if(drag){const id=drag.id;drag=null;if($('map').hasPointerCapture(id))$('map').releasePointerCapture(id);}keys.clear();if(frameId)cancelAnimationFrame(frameId);frameId=0;document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));metrics.fps=null;}
 const supported=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','ArrowUp','ArrowDown']);
 addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);addEventListener('focus',start);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();positioning.pause();}else{positioning.resume();start();}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();positioning.pause();roadWorker?.postMessage({type:'pause'});}else{positioning.resume();if(roadCacheEnabled)roadWorker?.postMessage({type:'resume'});start();}});
 for(const button of document.querySelectorAll('[data-key]')){button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keys.add(button.dataset.key);button.classList.add('active');start();});button.addEventListener('lostpointercapture',()=>{keys.delete(button.dataset.key);button.classList.remove('active');});}
 // A compass-follow drag temporarily owns the view; release eases back to the latest sensor heading.
 $('map').addEventListener('pointerdown',e=>{if(!ready||drag||e.button!==0||!e.isPrimary)return;drag={x:e.clientX,y:e.clientY,id:e.pointerId};$('map').setPointerCapture(e.pointerId);applyMode();});
@@ -159,12 +183,16 @@ $('view-mode').onclick=()=>{followCompass=!followCompass;applyMode();start();not
 function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();gps.target=null;gps.rawHeading=null;[player.x,player.y]=boundedPosition(player.x,player.y);camera();drawMini();notice('Location off. Manual exploration within 120 m of the loaded area center.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
 $('gps').onclick=toggleGps;$('gps-toggle').onclick=toggleGps;$('gps-cancel').onclick=()=>$('gps-dialog').close();
 $('gps-enable').onclick=()=>{$('gps-dialog').close();followCompass=true;stop();positioning.enable().then(ok=>{if(ok)notice('Waiting for your location…');});};
+$('road-cache-toggle').onclick=()=>{roadCacheEnabled=!roadCacheEnabled;try{localStorage.setItem('navigator-roads-enabled',String(roadCacheEnabled));}catch{}if(roadCacheEnabled)startRoadCache();else roadWorker?.postMessage({type:'pause'});showRoadCache();};
+$('road-cache-area').onclick=()=>{roadCacheEnabled=true;startRoadCache();sendRoadPosition(true);showRoadCache();};
+$('road-cache-clear').onclick=()=>{roadCacheEnabled=false;try{localStorage.setItem('navigator-roads-enabled','false');}catch{}if(!roadWorker)startRoadCache();roadWorker.postMessage({type:'clear'});showRoadCache();};
 $('menu').onclick=()=>{stop();$('guide').showModal();};$('close-guide').onclick=()=>$('guide').close();
 $('refresh').onclick=()=>request(area.live&&area.radius?{center:area.origin,radius:area.radius}:{live:true});
 $('stats-toggle').onclick=()=>{const hidden=!$('stats').hidden;$('stats').hidden=hidden;$('stats-toggle').setAttribute('aria-expanded',String(!hidden));updateUI();};
 $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else notice('For a full-screen view on iPhone, use Share → Add to Home Screen.',6000);}catch{notice('Fullscreen is unavailable in this browser.',4000);}};
+addEventListener('offline',()=>roadWorker?.postMessage({type:'pause'}));addEventListener('online',()=>{if(roadCacheEnabled)roadWorker?.postMessage({type:'resume'});});
 let installPrompt;addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('install').hidden=false;});$('install').onclick=async()=>{await installPrompt?.prompt();installPrompt=null;$('install').hidden=true;};
-if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;$('offline-status').textContent='App and bundled area are ready offline. Live and GPS areas last only for this session. iPhone: Share → Add to Home Screen.';}).catch(()=>{$('offline-status').textContent='Offline setup failed. Keep this tab online and reload to retry.';});}else $('offline-status').textContent='Offline caching is enabled in the production build.';
+if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;$('offline-status').textContent='App and bundled area are ready offline. Live building areas last for this session; downloaded road packages stay on this device. iPhone: Share → Add to Home Screen.';}).catch(()=>{$('offline-status').textContent='Offline setup failed. Keep this tab online and reload to retry.';});}else $('offline-status').textContent='Offline caching is enabled in the production build.';
 applyMode();
 // Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype E.
-window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});
+window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

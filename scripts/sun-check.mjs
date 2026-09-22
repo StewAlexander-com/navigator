@@ -1,10 +1,11 @@
+import {launchTestBrowser} from './test-browser.mjs';
 import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {solarPosition} from '../src/sun.js';
 const time=Date.parse('2026-09-21T19:00:00Z'),lat=34.0510824,lng=-118.2462058;
 const expected=(solarPosition(time,lat,lng).azimuth+180)%360,raw=(expected-40+360)%360;
-const browser=await chromium.launch({headless:true});
+const browser=await launchTestBrowser();
 try{
  const context=await browser.newContext({viewport:{width:390,height:844},permissions:['geolocation'],geolocation:{latitude:lat,longitude:lng,accuracy:8}});
  // Playwright fixes use host timestamps; restamp them into the controlled page clock.

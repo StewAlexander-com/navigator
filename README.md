@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.5 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.6 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -13,7 +13,7 @@ WASD translates, arrow keys turn/look, and dragging changes the view. Touch butt
 
 **Use my location** (header or field guide) opens an explicit prompt, then requests Geolocation and, on iPhone, motion & orientation permission from that tap. While enabled, your real position moves the camera and your compass turns it; movement buttons hide. Drag left or right to look through a full 360° circle; release to ease back to the latest phone heading. A sweep across 80% of the screen covers one turn. GPS and compass keep updating while you hold the view. Tap **View: compass** to enter **View: free look**: drag or use the turn buttons while GPS keeps moving your position. Compass readings continue unchanged, and the chevron keeps its resolved compass bearing while you look around. Tap the same button to ease the view back to compass-follow. If the compass is denied or absent, drag and the turn buttons keep controlling heading. Recenter becomes **Snap** (jump to the latest fix). Toggling the button again returns to manual controls at the current place.
 
-The app starts with a bundled, real OSM area. The field guide offers an explicit live Overpass refresh, falling back to the OSM API if Overpass is unavailable. Overpass can be unavailable or rate-limited; a failed refresh retains the current scene. Refreshed and GPS-downloaded data last for the current session. The bundled area and shell work offline after the service worker finishes installation.
+The app starts with a bundled, real OSM area. The field guide offers an explicit live Overpass refresh, falling back to the OSM API if Overpass is unavailable. Overpass can be unavailable or rate-limited; a failed refresh retains the current scene. Refreshed and GPS-downloaded building areas last for the current session. Road packages are independently downloaded from OSM via Overpass and stored locally in IndexedDB. The bundled area and shell work offline after the service worker finishes installation.
 
 ## Architecture and scope
 
@@ -51,7 +51,7 @@ A thin cyan chevron floats parallel to the ground at 0.75 m, 4.5 m ahead of the 
 
 Position uses `navigator.geolocation.watchPosition` with high accuracy; the Geolocation API exposes no polling rate, so adaptivity comes from filtering and from the idle render loop rather than from sensor duty cycling. Heading uses `deviceorientationabsolute` where available, otherwise `deviceorientation`; iOS supplies `webkitCompassHeading` and requires `DeviceOrientationEvent.requestPermission()` inside the enabling tap. Non-absolute `alpha` values are never treated as a compass. The facing direction is derived from the device rotation matrix by projecting the screen-up axis (device flat) or the rear-camera axis (device upright) onto the ground, whichever is longer, and correcting for `screen.orientation.angle`.
 
-Hiding the tab stops the position watch and orientation listener; returning restarts them. Readings live only in memory; nothing is persisted or sent to any server of ours. Enabling GPS does send the 800 m bounding box to Overpass or the OSM API, and that is stated in the prompt. Without an applied shadow alignment, compass heading is uncorrected and can be disturbed indoors or near vehicles. Camera correction remains deferred. Physical iPhone and Android walking results are not yet recorded; Chromium-driven checks are not a substitute.
+Hiding the tab stops the position watch and orientation listener; returning restarts them. Raw sensor samples live only in memory. Road-package coverage centers and map data are persisted on this device; no server of ours receives them. Enabling GPS sends the 800 m scene bounding box and requested areas within the 25-mile road target to Overpass or the OSM API, as stated in the prompt. Without an applied shadow alignment, compass heading is uncorrected and can be disturbed indoors or near vehicles. Camera correction remains deferred. Physical iPhone and Android walking results are not yet recorded; Chromium-driven checks are not a substitute.
 
 
 ## Sun cross-check (Prototype D)
@@ -102,8 +102,18 @@ The ingest step uses Shapely/GEOS to node street lines and polygonize their face
 
 `npm run test:free-look` checks default compass-follow, independent drag/turn while GPS moves, unchanged raw compass readings, compass-directed chevron during free look, return to follow, mode reset when GPS stops, phone layout and stale-graph fallback. The view defaults to compass-follow on every GPS enable; manual and denied-compass behavior remain available. The performance panel distinguishes sensor bearing from the view heading.
 
-### Nearby street label
+### Street label
 
-A compact translucent pill floats centered at the camera’s 1.65 m eye level, clearly above the 0.75 m chevron in demo and GPS modes. It uses named OSM street/path segments retained through both chunk lookup paths, selecting by player position rather than viewing direction. “Nearby” indicates proximity, not a confirmed road match or route. Small distance hysteresis reduces intersection flicker. Unnamed paths/streets and missing nearby geometry are explicit; no reverse-geocoding service or additional permission is used.
+A compact translucent pill floats centered at the camera’s 1.65 m eye level, clearly above the 0.75 m chevron in demo and GPS modes. It uses named OSM street/path segments retained through both chunk lookup paths, matching player position to rendered road surfaces rather than viewing direction or centerline distance alone. A named street containing the position takes precedence over a nearby unnamed footway. This remains approximate matching, not route guidance. Small distance hysteresis reduces intersection flicker. Missing names and unmatched street geometry are explicit; no reverse-geocoding service or additional permission is used.
 
 The pill ignores pointer input, has bounded width and text overflow, and hides when its anchor approaches the upper sightline or bottom controls. It is a screen overlay for map context; unlike the chevron, its text is not occluded by buildings. Run `npm run test:street-label` for demo/live labeling, phone bounds and drag-through checks.
+
+### Local OSM road packages
+
+Road downloads begin near the demo/current GPS location and target a 25-mile radius. At 12.5 miles from the download center the plan recenters, reusing completed overlap. Packages are downloaded serially from public Overpass, validated, compressed and saved in this browser's IndexedDB—not uploaded to GitHub. Completed areas resume across reloads; dense areas subdivide. The field guide offers pause/resume, retry/cache this area and clear. A saved GPS region is kept on startup until GPS is enabled or another area is explicitly selected.
+
+The separate road-cache limits are 128 MiB stored payloads, 4 MiB per response, 16 MiB per decoded package, and 2,400 active segments within 300 m; the renderer still cuts off at 180 m. Worker maintenance after roughly 25 m movement removes packages extending outside the current 25-mile radius, conservatively removing whole edge packages. Metadata, transient objects and browser/GPU overhead are additional. The bundled demo and app shell remain available separately.
+
+The footer reports completed areas, stored bytes and download state. This is a target, not guaranteed complete coverage: public-service outages, rate limits, quota and conservative edge eviction can leave gaps. Road names also depend on OSM tagging and approximate position matching. Full-radius transfer measurements and physical-phone offline walking remain unverified. Building downloads keep their existing small-area behavior.
+
+Run `npm run test:road-cache` against production preview for installation, real IndexedDB persistence, offline reload, multi-tab access, clear and phone-layout checks with controlled OSM responses. Implementation decisions, evidence and limitations: [five-pass Organic Maps review](docs/road-cache-review.md).

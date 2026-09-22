@@ -1,7 +1,8 @@
+import {launchTestBrowser} from './test-browser.mjs';
 import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-const browser=await chromium.launch({headless:true});
+const browser=await launchTestBrowser();
 const context=await browser.newContext({viewport:{width:1440,height:900}});
 const page=await context.newPage();const errors=[],requests=[],badResponses=[];
 page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});page.on('request',r=>requests.push(r.url()));page.on('response',r=>{if(r.status()>=400)badResponses.push([r.url(),r.status()]);});

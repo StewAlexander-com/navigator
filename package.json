@@ -1,6 +1,6 @@
 {
   "name": "navigator",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,8 @@
     "check:sectors": "node scripts/check-sectors.mjs",
     "bench:sectors": "node scripts/benchmark-sectors.mjs",
     "test:free-look": "node scripts/free-look-check.mjs",
-    "test:street-label": "node scripts/street-label-check.mjs"
+    "test:street-label": "node scripts/street-label-check.mjs",
+    "test:road-cache": "node scripts/road-cache-check.mjs"
   },
   "dependencies": {
     "maplibre-gl": "6.9.1",

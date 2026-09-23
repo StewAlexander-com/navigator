@@ -14,6 +14,8 @@ await page.screenshot({path:'test-results/desktop.png'});
 await page.keyboard.down('KeyW');await page.waitForTimeout(5000);
 const moving=await page.evaluate(()=>window.navigatorDiagnostics());
 await page.keyboard.up('KeyW');assert.ok(Math.hypot(moving.player.x,moving.player.y)>10);assert.equal(moving.metrics.drawCalls,7);
+// The startup progress strip has gone once the bundled area is ready.
+assert.equal(moving.progress.visible,false);assert.equal(moving.progress.task,null);assert.equal(await page.locator('#progress').isVisible(),false);
 await page.mouse.move(600,400);await page.mouse.down();await page.mouse.move(700,400);await page.mouse.up();
 assert.ok(Math.abs((await page.evaluate(()=>window.navigatorDiagnostics())).player.travelBearing-38)<.01);
 await page.locator('#reset').click();await page.keyboard.down('KeyD');await page.waitForTimeout(250);await page.keyboard.up('KeyD');
@@ -90,9 +92,11 @@ await driveContext.addInitScript(fixShim);
 const drivePage=await driveContext.newPage();drivePage.on('pageerror',e=>driveErrors.push(e.message));drivePage.on('console',m=>{if(m.type()==='error')driveErrors.push(m.text());});drivePage.on('request',r=>driveRequests.push(r.url()));
 await drivePage.goto('http://127.0.0.1:4173/navigator/');await drivePage.waitForFunction(()=>window.navigatorDiagnostics?.().ready,null,{timeout:20000});
 await drivePage.locator('#gps').click();await drivePage.locator('#gps-enable').click();await drivePage.waitForTimeout(300);
+// Until the first fix the pill shows a tqdm-style acquisition strip with an elapsed clock.
+const acquiring=await diag(drivePage);assert.equal(acquiring.progress.task,'gps');assert.equal(acquiring.progress.visible,true);assert.ok(acquiring.progress.label.includes('GPS'));assert.ok(/^\d\d:\d\d/.test(acquiring.progress.text),acquiring.progress.text);assert.ok(await drivePage.locator('#progress').isVisible());await drivePage.screenshot({path:'test-results/progress-gps.png'});
 // GPS comes on already at speed: the 25-mile road plan must not start (driving hold) until a stop or an explicit tap.
 await drivePage.evaluate(h=>window.__fix({latitude:h.latitude,longitude:h.longitude,accuracy:4,speed:27,heading:0}),HOME);
-await drivePage.waitForFunction(()=>window.navigatorDiagnostics().sensors.fixes.accepted>=1,null,{timeout:10000});
+await drivePage.waitForFunction(()=>window.navigatorDiagnostics().sensors.fixes.accepted>=1,null,{timeout:10000});assert.notEqual((await diag(drivePage)).progress.task,'gps');
 await drivePage.waitForFunction(()=>window.navigatorDiagnostics().roadCache.hold===true,null,{timeout:5000});assert.equal((await diag(drivePage)).roadCache.gpsPlanned,false);
 // At 27 m/s the 122 m of runway left in the bundled box is under eight seconds of travel, so the next square is prefetched
 // while the bundled area still covers the fix; the later edge swap must then reuse it instead of downloading at the edge.
@@ -145,17 +149,20 @@ await limitContext.close();
 // 60 mph drive through it must not teleport the camera.
 const MEBANE={latitude:36.099202,longitude:-79.3491509};
 const mebaneContext=await browser.newContext({viewport:{width:1440,height:900},permissions:['geolocation']});const mebaneErrors=[],mebaneRequests=[];
-await mebaneContext.route('https://overpass-api.de/**',route=>route.fulfill({path:/\(36\.\d+,-79\./.test(decodeURIComponent(route.request().url()))?'tests/fixtures/mebane-800m.json':'public/osm-snapshot.json',contentType:'application/json'}));
+// The first Overpass answer is held for 1.5 s so the download progress strip can be observed while the request is in flight.
+let mebaneAnswers=0;await mebaneContext.route('https://overpass-api.de/**',async route=>{if(mebaneAnswers++===0)await new Promise(r=>setTimeout(r,1500));await route.fulfill({path:/\(36\.\d+,-79\./.test(decodeURIComponent(route.request().url()))?'tests/fixtures/mebane-800m.json':'public/osm-snapshot.json',contentType:'application/json'});});
 await mebaneContext.addInitScript(fixShim);
 const mebanePage=await mebaneContext.newPage();mebanePage.on('pageerror',e=>mebaneErrors.push(e.message));mebanePage.on('console',m=>{if(m.type()==='error')mebaneErrors.push(m.text());});mebanePage.on('request',r=>mebaneRequests.push(r.url()));
 await mebanePage.goto('http://127.0.0.1:4173/navigator/');await mebanePage.waitForFunction(()=>window.navigatorDiagnostics?.().ready,null,{timeout:20000});
 await mebanePage.locator('#gps').click();await mebanePage.locator('#gps-enable').click();await mebanePage.waitForTimeout(300);
 await mebanePage.evaluate(c=>window.__fix(c),{...MEBANE,accuracy:5,speed:0,heading:null});
+await mebanePage.waitForFunction(()=>window.navigatorDiagnostics().progress.task==='area',null,{timeout:5000});await mebanePage.waitForTimeout(600);
+const downloading=await diag(mebanePage);assert.equal(downloading.progress.visible,true);assert.ok(downloading.progress.label.startsWith('Downloading the OpenStreetMap area'),downloading.progress.label);assert.ok(/00:0\d/.test(downloading.progress.text),downloading.progress.text);assert.ok(await mebanePage.locator('#progress').isVisible());await mebanePage.screenshot({path:'test-results/progress-download.png'});
 await mebanePage.waitForFunction(()=>{const d=window.navigatorDiagnostics();return d.area.live===true&&!d.busy&&d.area.kinds&&d.metrics.buildings>0;},null,{timeout:20000});await mebanePage.waitForTimeout(800);
-let mb=await diag(mebanePage);assert.equal(mb.area.provider,'Overpass');assert.equal(mb.area.radius,400);assert.equal(mb.area.prior,true);
+let mb=await diag(mebanePage);assert.equal(mb.progress.visible,false);assert.equal(mb.progress.task,null);assert.equal(mb.area.provider,'Overpass');assert.equal(mb.area.radius,400);assert.equal(mb.area.prior,true);
 assert.equal(mb.area.kinds.reduce((a,b)=>a+b,0),153);assert.ok(mb.area.kinds[1]>=120,`homes ${mb.area.kinds}`);assert.equal(mb.area.kinds[4],0);assert.equal(mb.area.kinds[6],5);
 assert.ok(mb.metrics.buildings>=20,`buildings ${mb.metrics.buildings}`);assert.equal(mb.metrics.drawCalls,7);assert.ok(mb.metrics.vertices<=90000);assert.ok(mb.metrics.fps===null||mb.metrics.fps>0);
-await mebanePage.evaluate(()=>{document.getElementById('notice').textContent='';});await mebanePage.screenshot({path:'test-results/mebane.png'});
+await mebanePage.evaluate(()=>{document.getElementById('notice-text').textContent='';});await mebanePage.screenshot({path:'test-results/mebane.png'});
 // Drive north out of Elizabeth Lane at 27 m/s for 12 s: every fix accepted, no per-frame step above 10 m, nothing backwards.
 await mebanePage.evaluate(lat=>{window.__probe=[];const M=111319.49;(function sample(){const d=window.navigatorDiagnostics();window.__probe.push([performance.now(),d.player.y+(d.area.origin[1]-lat)*M]);requestAnimationFrame(sample);})();},MEBANE.latitude);
 for(let s=1;s<=12;s++){await mebanePage.evaluate(c=>window.__fix(c),{latitude:MEBANE.latitude+27*s/M,longitude:MEBANE.longitude,accuracy:5,speed:27,heading:0});await mebanePage.waitForTimeout(1000);}

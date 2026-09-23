@@ -160,3 +160,13 @@ Recorded 2026-09-23 in local headless Chromium on macOS. Motivation: in the real
 - Non-regression screenshot: the bundled Los Angeles start view (0, 0, heading 38°) captured before and after this change differs in 0 of 1,296,000 pixels (maximum channel delta 0), with the same 63 buildings and 10,578 vertices.
 
 Limits: these are inferences from footprint size and street context, not surveyed use; a small shop with no tags on a service alley in a mostly-small-footprint square would be drawn as a home. The 250 m² footprint, 60 m reach, 70 % prior and 0.29 gable rise are documented defaults. Physical-phone GPU cost of the extra roof triangles (12 vertices per gabled home) is unmeasured.
+
+## v0.1.15 — progress feedback
+
+Recorded 2026-09-23 in local headless Chromium on macOS. Motivation: a first GPS fix can take tens of seconds and a live square is a multi-second download plus parse and build, with no visible progress beyond a static notice.
+
+- `npm test`: 72 passed, 0 failed (68 before). New: `progressFraction` trusts `Content-Length` only while the bytes read stay within it (a compressed transfer overtakes it and the bar goes indeterminate); the tqdm-style status line (`42 % · 1.20 / 2.85 MiB · 0.41 MiB/s · 00:03 · parsing OSM data`, bytes-only variants, clock-only GPS variant); transfer-rate sampling at ≥ 400 ms with smoothing; the worker's `progress` messages in order downloading → parsing → building with monotonic bytes and the final download report equal to the body size, prefetch progress tagged `prefetch` without a build phase, and a cache hit reporting only the build phase.
+- `npm run test:browser`: passed. The strip is hidden once the bundled area is ready; in the 60 mph context it is visible with task `gps`, a label mentioning GPS and a `mm:ss` clock between the enabling tap and the first fix, and gone once the fix is accepted; in the Mebane context the first routed Overpass answer is held for 1.5 s and the strip shows "Downloading the OpenStreetMap area around you" with the elapsed clock, then hides once the area is live. Screenshots `progress-gps.png` and `progress-download.png` inspected. Existing walking, rate-limit, denied and offline checks unchanged.
+- `npm run test:stream`, `test:sun`, `test:street-label`, `test:road-cache`, `test:building-styles`, `test:chevron`: passed.
+
+Limits: the determinate bar depends on the service sending an uncompressed body or an honest total; Overpass and GitHub Pages compress JSON, so in practice downloads show bytes and rate with a sweeping bar. GPS acquisition has no knowable total, so it shows elapsed time and the last rejection reason only. Parse and build phases on a phone are not timed here.

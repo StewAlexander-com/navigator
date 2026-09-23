@@ -11,7 +11,7 @@ const fetched=[];let script=()=>({status:200,body:snapshot});
 globalThis.fetch=async url=>{fetched.push(String(url));const r=script(String(url),fetched.length);return new Response(r.body??'',{status:r.status,headers:r.headers||{}});};
 await import('../src/world.worker.js');
 let id=0;
-async function send(data){const before=messages.length;const mine=++id;await self.onmessage({data:{...data,id:mine}});return messages.slice(before).find(m=>m.id===mine);}
+async function send(data){const before=messages.length;const mine=++id;await self.onmessage({data:{...data,id:mine}});return messages.slice(before).find(m=>m.id===mine&&m.type!=='progress');}
 const overpass=u=>u.startsWith('https://overpass-api.de/'),osmApi=u=>u.startsWith('https://api.openstreetmap.org/');
 const bboxOf=u=>decodeURIComponent(u).match(/way\[building\]\(([^)]+)\)/)[1].split(',').map(Number);
 const center=toLngLat(0,3000);
@@ -54,4 +54,17 @@ test('a dense square (504 or Overpass timeout remark) steps down 1,000 â†’ 400 â
  const e=toLngLat(-100000,0);const last=await send({type:'load',center:e,radius:LIMITS.area,fix:e});assert.equal(last.type,'ready');assert.equal(last.provider,'OSM API');assert.equal(fetched.filter(overpass).length,2);assert.equal(fetched.filter(osmApi).length,1);
  fetched.length=0;script=(u,n)=>osmApi(u)?{status:200,body:snapshot}:{status:500};
  const f=toLngLat(-120000,0);const other=await send({type:'load',center:f,radius:LIMITS.area,fix:f});assert.equal(other.provider,'OSM API');assert.equal(fetched.filter(overpass).length,1);
+});
+test('loads and prefetches report download bytes, the parse phase and the build phase for the progress strip',async()=>{
+ fetched.length=0;messages.length=0;script=()=>({status:200,body:snapshot,headers:{'content-length':String(Buffer.byteLength(snapshot))}});
+ const c=toLngLat(-140000,0);const r=await send({type:'load',center:c,radius:LIMITS.area,fix:c});assert.equal(r.type,'ready');
+ const progress=messages.filter(m=>m.type==='progress'&&m.id===r.id);const phases=progress.map(p=>p.phase);
+ assert.ok(progress.length>=3);assert.ok(progress.every(p=>p.task==='load'));
+ assert.ok(phases.indexOf('downloading')<phases.indexOf('parsing')&&phases.indexOf('parsing')<phases.indexOf('building'));assert.equal(phases.at(-1),'building');
+ const lastDownload=progress.filter(p=>p.phase==='downloading').at(-1);assert.equal(lastDownload.bytes,Buffer.byteLength(snapshot));assert.equal(lastDownload.total,Buffer.byteLength(snapshot));
+ for(let i=1;i<progress.length;i++)if(progress[i].phase==='downloading')assert.ok(progress[i].bytes>=progress[i-1].bytes);
+ messages.length=0;const ahead=toLngLat(-160000,0);const p=await send({type:'prefetch',center:ahead,radius:LIMITS.area,fix:ahead});assert.equal(p.type,'prefetched');
+ const pre=messages.filter(m=>m.type==='progress');assert.ok(pre.length>=2);assert.ok(pre.every(m=>m.task==='prefetch'&&m.id===p.id));assert.equal(pre.some(m=>m.phase==='building'),false);
+ // A cache hit reports nothing to download.
+ messages.length=0;const hit=await send({type:'load',center:ahead,radius:LIMITS.area,fix:ahead});assert.equal(hit.cached,true);assert.deepEqual(messages.filter(m=>m.type==='progress'&&m.id===hit.id).map(m=>m.phase),['building']);
 });

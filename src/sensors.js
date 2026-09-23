@@ -15,7 +15,14 @@ export const SENSORS = Object.freeze({
   compassTimeoutMs: 4000, // wait this long for a first absolute heading event
   reanchorRetryMs: 30000, // delay before another area download after a failure
   idleHeading: 0.05,      // degrees; smaller residual heading error is "settled"
-  idlePosition: 0.01      // metres; smaller residual position error is "settled"
+  idlePosition: 0.01,     // metres; smaller residual position error is "settled"
+  // Driving-speed rules. Every one of them reduces to the walking behaviour above below `movingSpeed`.
+  speedGain: 1.5,         // plausibility allowance becomes max(maxSpeed, speedGain × the receiver's own speed)
+  snapGain: 3,            // snap threshold becomes max(snapDistance, snapGain × speed × fix interval)
+  movingSpeed: 3,         // m/s; dead reckoning and course fusion start here; walking pace is untouched
+  fuseSpeed: 7,           // m/s; at or above this the camera heading follows the GPS course entirely
+  fuseAccuracy: 25,       // degrees; a worse reported compass accuracy defers to GPS course while moving
+  reckonMaxS: 2           // seconds; dead reckoning stops extrapolating this long after the last fix
 });
 
 const RAD = Math.PI / 180;
@@ -51,11 +58,40 @@ export function smoothHeading(current, target, dt, tau = SENSORS.headingTau) {
   return normalizeHeading(current + headingDelta(current, target) * k);
 }
 
-export function smoothPosition(current, target, dt, tau = SENSORS.positionTau) {
+export function smoothPosition(current, target, dt, tau = SENSORS.positionTau, snap = SENSORS.snapDistance) {
   const dx = target[0] - current[0], dy = target[1] - current[1];
-  if (Math.hypot(dx, dy) > SENSORS.snapDistance) return [target[0], target[1]];
+  if (Math.hypot(dx, dy) > snap) return [target[0], target[1]];
   const k = 1 - Math.exp(-Math.max(dt, 0) / tau);
   return [current[0] + dx * k, current[1] + dy * k];
+}
+
+const moving = speed => Number.isFinite(speed) && speed > 0 ? speed : 0;
+// Fastest motion still considered plausible: the walking constant, or the receiver's own speed with headroom.
+export const plausibleSpeed = speed => Math.max(SENSORS.maxSpeed, SENSORS.speedGain * moving(speed));
+// A normal fix gap at speed eases instead of teleporting; at walking pace this is the fixed 45 m.
+export const snapDistanceFor = (speed, intervalMs) => Math.max(SENSORS.snapDistance, SENSORS.snapGain * moving(speed) * (Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 1000) / 1000);
+
+// Where the receiver should be `elapsed` seconds after its last fix if speed and course hold.
+// Below `movingSpeed` or without a course the fix itself is returned, so walking is unchanged.
+export function deadReckon([x, y], speed, course, elapsed) {
+  if (!Number.isFinite(speed) || speed < SENSORS.movingSpeed || !Number.isFinite(course)) return [x, y];
+  const d = speed * Math.min(Math.max(elapsed, 0), SENSORS.reckonMaxS), r = course * RAD;
+  return [x + Math.sin(r) * d, y + Math.cos(r) * d];
+}
+
+export const smoothstep = (a, b, v) => {const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t);};
+// Weight of the GPS course in the camera heading: 0 at walking pace, 1 at `fuseSpeed`, and 1 as soon as
+// the platform reports a poor compass while moving (a car body is a magnet; the course is not).
+export function courseWeight(speed, compassAccuracy = null) {
+  if (!Number.isFinite(speed) || speed < SENSORS.movingSpeed) return 0;
+  if (Number.isFinite(compassAccuracy) && compassAccuracy > SENSORS.fuseAccuracy) return 1;
+  return smoothstep(SENSORS.movingSpeed, SENSORS.fuseSpeed, speed);
+}
+// Circular blend from the compass toward the course by `weight`; either side may be missing.
+export function fuseHeading(compass, course, weight) {
+  if (!Number.isFinite(course) || weight <= 0) return compass;
+  if (!Number.isFinite(compass) || weight >= 1) return normalizeHeading(course);
+  return normalizeHeading(compass + headingDelta(compass, course) * weight);
 }
 
 // Geodesic-free planar distance is adequate at the sub-kilometre scale used here.
@@ -77,8 +113,9 @@ export function evaluateFix(previous, fix, rejectedStreak = 0) {
     if (dt < 0) return {accepted: false, reason: 'out-of-order'};
     if (dt < SENSORS.staleFixMs / 1000) {
       const distance = metresBetween([previous.lng, previous.lat], [fix.lng, fix.lat]);
-      // Allow the combined accuracy radii before treating motion as implausible.
-      if (distance - previous.accuracy - fix.accuracy > SENSORS.maxSpeed * Math.max(dt, 0.5)) {
+      // Allow the combined accuracy radii before treating motion as implausible. The receiver's own
+      // speed widens the allowance in a car; without one this is the original 15 m/s walking gate.
+      if (distance - previous.accuracy - fix.accuracy > plausibleSpeed(fix.speed) * Math.max(dt, 0.5)) {
         return rejectedStreak >= SENSORS.recoverAfter ? {accepted: true, reason: 'recovered'} : {accepted: false, reason: 'implausible'};
       }
     }

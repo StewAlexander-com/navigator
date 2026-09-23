@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {compassHeading,smoothHeading,smoothPosition,headingDelta,evaluateFix,travelCourse,areaAround,areaCovers,insideBBox,SENSORS} from '../src/sensors.js';
+import {compassHeading,smoothHeading,smoothPosition,headingDelta,evaluateFix,travelCourse,areaAround,areaCovers,insideBBox,plausibleSpeed,snapDistanceFor,deadReckon,courseWeight,fuseHeading,SENSORS} from '../src/sensors.js';
 import {ORIGIN,BBOX,LIMITS,toLocal,toLngLat,parseWorld} from '../src/world.js';
 import fs from 'node:fs';
 const near=(a,b,tol=1e-6)=>assert.ok(Math.abs(headingDelta(a,b))<tol,`${a} vs ${b}`);
@@ -41,6 +41,45 @@ test('fix filtering rejects inaccurate, out-of-order and implausible fixes',()=>
  assert.equal(evaluateFix(first,{lng,lat,accuracy:8,timestamp:2000},SENSORS.recoverAfter).reason,'recovered');
  assert.equal(evaluateFix(first,{lng,lat,accuracy:8,timestamp:1000+SENSORS.staleFixMs}).accepted,true);
  const [lng2,lat2]=toLngLat(0,12);assert.equal(evaluateFix(first,{lng:lng2,lat:lat2,accuracy:8,timestamp:2000}).accepted,true);
+});
+// Straight-road drive through the real gate: v m/s, 1 Hz fixes, fixed accuracy, receiver speed reported.
+function drive(v,accuracy,seconds=60,reportSpeed=true){
+ let last=null,streak=0,accepted=0,maxJump=0,lastAccepted=null;
+ for(let t=0;t<seconds;t++){const [lng,lat]=toLngLat(v*t,0);const fix={lng,lat,accuracy,timestamp:t*1000,speed:reportSpeed?v:null,heading:90};
+  const verdict=evaluateFix(last,fix,streak);
+  if(verdict.accepted){accepted++;streak=0;if(lastAccepted)maxJump=Math.max(maxJump,v*(t-lastAccepted.t));lastAccepted={t};last=fix;}else if(verdict.reason==='implausible')streak++;
+ }
+ return {accepted,maxJump};
+}
+test('plausibility gate scales with the receiver speed at driving pace and is the walking gate otherwise',()=>{
+ assert.equal(plausibleSpeed(null),SENSORS.maxSpeed);assert.equal(plausibleSpeed(1.4),SENSORS.maxSpeed);assert.equal(plausibleSpeed(10),SENSORS.maxSpeed);
+ assert.equal(plausibleSpeed(27),40.5);
+ // 60 mph with a good receiver: every 1 Hz fix is accepted, so no 108 m "recovered" jumps.
+ for(const accuracy of [3,5,6])assert.deepEqual(drive(27,accuracy),{accepted:60,maxJump:27});
+ // Without a reported speed the original gate still rejects three of four fixes at that pace (documented baseline).
+ assert.equal(drive(27,3,60,false).accepted,15);
+ // Walking-pace drives are unchanged, and a 400 m jump remains implausible whatever speed is claimed for a 1 s gap.
+ assert.deepEqual(drive(1.4,8),{accepted:60,maxJump:1.4});assert.deepEqual(drive(11,5),{accepted:60,maxJump:11});
+ const first={lng:ORIGIN[0],lat:ORIGIN[1],accuracy:8,timestamp:1000};const [lng,lat]=toLngLat(0,400);
+ assert.equal(evaluateFix(first,{lng,lat,accuracy:8,timestamp:2000,speed:0}).reason,'implausible');
+ assert.equal(evaluateFix(first,{lng,lat,accuracy:8,timestamp:2000,speed:27}).reason,'implausible');
+});
+test('snap threshold grows with speed and fix interval, never below 45 m, and smoothPosition honours it',()=>{
+ assert.equal(snapDistanceFor(null,1000),SENSORS.snapDistance);assert.equal(snapDistanceFor(1.4,1000),SENSORS.snapDistance);assert.equal(snapDistanceFor(15,1000),SENSORS.snapDistance);
+ assert.equal(snapDistanceFor(27,1000),81);assert.equal(snapDistanceFor(27,2000),162);assert.equal(snapDistanceFor(27,null),81);
+ const eased=smoothPosition([0,0],[60,0],1/60,SENSORS.positionTau,81);assert.ok(eased[0]>0&&eased[0]<5,`eased ${eased}`);
+ assert.deepEqual(smoothPosition([0,0],[60,0],1/60),[60,0]);
+});
+test('dead reckoning advances along the course only above walking pace and stops after two seconds',()=>{
+ assert.deepEqual(deadReckon([10,20],1.4,0,1),[10,20]);assert.deepEqual(deadReckon([10,20],null,0,1),[10,20]);assert.deepEqual(deadReckon([10,20],27,null,1),[10,20]);
+ const [x,y]=deadReckon([0,0],27,0,1);assert.ok(Math.abs(x)<1e-9&&Math.abs(y-27)<1e-9);
+ const [ex,ey]=deadReckon([0,0],27,90,.5);assert.ok(Math.abs(ex-13.5)<1e-9&&Math.abs(ey)<1e-9);
+ assert.ok(Math.abs(deadReckon([0,0],27,0,5)[1]-27*SENSORS.reckonMaxS)<1e-9);assert.deepEqual(deadReckon([0,0],27,0,-1),[0,0]);
+});
+test('course fusion is off at walking pace, complete at 7 m/s or with a poor compass while moving, and blends on the circle',()=>{
+ assert.equal(courseWeight(null),0);assert.equal(courseWeight(2.9),0);assert.equal(courseWeight(SENSORS.movingSpeed),0);assert.equal(courseWeight(SENSORS.fuseSpeed),1);assert.equal(courseWeight(27),1);
+ assert.equal(courseWeight(5),.5);assert.equal(courseWeight(1,40),0);assert.equal(courseWeight(4,40),1);assert.equal(courseWeight(4,10),courseWeight(4));
+ assert.equal(fuseHeading(120,90,0),120);near(fuseHeading(120,90,1),90);near(fuseHeading(350,10,.5),0);near(fuseHeading(null,90,.3),90);assert.equal(fuseHeading(120,null,1),120);
 });
 test('travel course prefers a moving receiver course, else displacement beyond noise',()=>{
  const a={lng:ORIGIN[0],lat:ORIGIN[1],accuracy:5,timestamp:0};

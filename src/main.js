@@ -4,7 +4,7 @@ import {createWorldLayer} from './renderer.js';
 import {updateTravelBearing} from './chevron.js';
 import {createPositioning} from './positioning.js';
 import {createSunCheck} from './sun-check.js';
-import {smoothHeading, smoothPosition, headingDelta, areaCovers, SENSORS} from './sensors.js';
+import {smoothHeading, smoothPosition, headingDelta, areaCovers, deadReckon, snapDistanceFor, courseWeight, fuseHeading, SENSORS} from './sensors.js';
 import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition} from './world.js';
 import {nearestStreet} from './street-label.js';
 import {distance as roadDistance} from './road-packages.js';
@@ -42,7 +42,9 @@ function startRoadCache(){
  if(!roadCacheEnabled)roadWorker.postMessage({type:'pause'});sendRoadPosition();
 }
 
-const gps={target:null,rawHeading:null,failedAt:-Infinity};
+// `target` is the last accepted fix in local metres; `speed`/`course` come from the receiver and drive the
+// speed-aware rules in sensors.js (dead reckoning, snap threshold, course fusion). `blend` is the current course weight.
+const gps={target:null,rawHeading:null,failedAt:-Infinity,fixAt:0,speed:null,course:null,blend:0};
 const metrics={renderedFrames:0,drawCalls:0,vertices:0,triangles:0,buildings:0,geometryBytes:0,roadVertices:0,frameMs:null,fps:null,queryMs:null,responseBytes:null};
 const keys=new Set();let ready=false,worldLayer,roads=[],busy=false,lastBuild=[0,0],lastStreamHeading=38,requestId=0,frameId=0,lastTime=0,uiTime=0,noticeTimer,drag=null,offlineReady=false;
 const worker=new Worker(new URL('./world.worker.js',import.meta.url),{type:'module'});
@@ -62,7 +64,7 @@ map.getCanvas().addEventListener('webglcontextlost',e=>{e.preventDefault();stop(
 function camera(){const h=player.heading*Math.PI/180,eye=toLngLat(player.x,player.y,area.origin),ahead=toLngLat(player.x+Math.sin(h)*20,player.y+Math.cos(h)*20,area.origin);map.jumpTo(map.calculateCameraOptionsFromTo(eye,1.65,ahead,1.65+Math.tan(player.pitch*Math.PI/180)*20));}
 const positioning=createPositioning({
  onFix(fix,course){
-  gps.target=toLocal([fix.lng,fix.lat],area.origin);
+  gps.target=toLocal([fix.lng,fix.lat],area.origin);gps.fixAt=performance.now();gps.speed=Number.isFinite(fix.speed)?fix.speed:null;gps.course=positioning.state.course;
   if(course!==null)player.travelBearing=course;
   if(positioning.state.fixes.accepted===1){[player.x,player.y]=gps.target;camera();notice(`Location found (±${Math.round(fix.accuracy)} m). ${positioning.state.compass==='on'?'Turn to look around.':'Drag to look around.'}`,6000);}
   ensureAreaCovers(fix);sendRoadPosition();start();
@@ -120,7 +122,7 @@ function applyMode(){
  $('gps-toggle').textContent=live?'Stop using my location':'Use my location';
  $('position-label').textContent=live?(s.position==='on'?`GPS POSITION · ±${Math.round(s.accuracy)} m`:'GPS POSITION · WAITING FOR FIX'):'VIRTUAL POSITION · GPS OFF';
  $('view-mode').hidden=!live;$('view-mode').disabled=s.compass!=='on';$('view-mode').setAttribute('aria-pressed',String(!followCompass));$('view-mode').textContent=s.compass!=='on'?'View: manual':followCompass?'View: compass':'View: free look';
- $('heading-source').textContent=live&&!followCompass?'FREE LOOK':compass&&drag?'LOOK AROUND':compass&&sunCheck?.snapshot().applied?'SUN-ALIGNED':compass?(s.compassAccuracy!==null?`COMPASS ±${Math.round(s.compassAccuracy)}°`:'COMPASS'):live?({waiting:'COMPASS…',denied:'COMPASS DENIED',unavailable:'NO COMPASS',paused:'PAUSED'}[s.compass]||'MANUAL LOOK'):'MANUAL';
+ $('heading-source').textContent=live&&!followCompass?'FREE LOOK':compass&&drag?'LOOK AROUND':compass&&sunCheck?.snapshot().applied?'SUN-ALIGNED':compass&&gps.blend>=.5?'GPS COURSE':compass?(s.compassAccuracy!==null?`COMPASS ±${Math.round(s.compassAccuracy)}°`:'COMPASS'):live?({waiting:'COMPASS…',denied:'COMPASS DENIED',unavailable:'NO COMPASS',paused:'PAUSED'}[s.compass]||'MANUAL LOOK'):'MANUAL';
  $('reset').title=live?'Snap to the latest GPS fix':'Return to starting point';$('reset-label').textContent=live?'Snap':'Recenter';
  if(live&&s.compass!=='on'&&s.compass!=='waiting'&&!applyMode.warned){applyMode.warned=true;notice(s.compass==='denied'?'Motion & orientation access was denied. Drag or use the turn buttons to look around.':s.compass==='unavailable'?'No absolute compass is available here. Drag or use the turn buttons to look around.':'',6000);}
  if(!live)applyMode.warned=false;
@@ -135,19 +137,25 @@ function updateStreetLabel(){
 }
 function updateUI(){updateStreetLabel();const h=(player.heading%360+360)%360;const [lng,lat]=toLngLat(player.x,player.y,area.origin),s=positioning.state;$('heading').textContent=String(Math.round(h)%360).padStart(3,'0')+'°';$('cardinal').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(h/45)%8];$('coordinates').textContent=`${Math.abs(lat).toFixed(5)}° ${lat<0?'S':'N'}  ${Math.abs(lng).toFixed(5)}° ${lng<0?'W':'E'}`;$('fps').textContent=metrics.fps?`${metrics.fps.toFixed(0)} fps`:'idle';
  const entries=[['Frame interval',metrics.frameMs?`${metrics.frameMs.toFixed(1)} ms`:'Move to measure'],['World draw calls',`${metrics.drawCalls} / 7`],['Building vertices',`${metrics.vertices.toLocaleString()} / 90,000`],['Road vertices',`${metrics.roadVertices.toLocaleString()} / 18,000`],['Loaded buildings',`${metrics.buildings} / 160`],['Chunks active / ahead',metrics.stream?`${metrics.stream.active} / ${metrics.stream.prefetched}`:'—'],['Resident chunks',metrics.stream?`${metrics.stream.resident} / 28`:'—'],['Cached building buffers',metrics.stream?`${(metrics.stream.cacheBytes/1048576).toFixed(2)} MiB`:'—'],['Geometry estimate',metrics.stream?`${(metrics.stream.geometryEstimateBytes/1048576).toFixed(2)} MiB`:'—'],['Evicted / promoted',metrics.stream?`${metrics.stream.evicted} / ${metrics.stream.promoted}`:'—'],['Lookup',metrics.stream?.lookupMode||'—'],['Sectors visited',metrics.stream?`${metrics.stream.sectorsVisited} / ${metrics.stream.sectorCount}`:'—'],['Candidate chunks',metrics.stream?`${metrics.stream.candidateChunks} / ${metrics.stream.indexed}`:'—'],['Lookup time',metrics.stream?`${metrics.stream.lookupMs.toFixed(3)} ms`:'—'],['Sector graph bytes',metrics.stream?`${(metrics.stream.graphBytes/1024).toFixed(1)} KiB`:'—'],['Chunk update',metrics.stream?`${metrics.stream.queryMs.toFixed(2)} ms`:'—'],['Disposed meshes',String(metrics.disposedBuffers||0)],['Omitted buildings / chunks',`${metrics.omitted||0} / ${metrics.stream?.omittedChunks||0}`],['Source coordinate estimate',metrics.stream?`${(metrics.stream.sourceNumericBytes/1048576).toFixed(2)} MiB`:'—'],['Geometry buffers',`${(metrics.geometryBytes/1048576).toFixed(2)} MiB`],['Fetch + worker processing',metrics.queryMs?`${metrics.queryMs.toFixed(0)} ms`:'—'],['OSM response',metrics.responseBytes?`${(metrics.responseBytes/1048576).toFixed(2)} MiB`:'—'],['Loaded area',area.radius?`${area.radius*2} m square · ${area.provider}`:'Fixed LA box · '+area.provider],['JS heap',performance.memory?`${(performance.memory.usedJSHeapSize/1048576).toFixed(1)} MiB`:'Unavailable'],['GPU memory','Unavailable'],['Road package state',roadCacheState.phase],['Road packages',`${roadCacheState.complete||0} / ${roadCacheState.total||0}`],['Local road storage',`${((roadCacheState.bytes||0)/1048576).toFixed(2)} / 128 MiB`],['Cached road segments',`${roadCacheState.activeSegments||0} / 2400`],['Road packages evicted',String(roadCacheState.evicted||0)],
-  ['GPS accuracy',s.mode!=='gps'?'Sensors off':s.accuracy!==null?`±${s.accuracy.toFixed(0)} m · ${s.fixes.accepted} used / ${s.fixes.rejected} rejected${s.fixes.lastReason&&s.fixes.lastReason!=='ok'?' ('+s.fixes.lastReason+')':''}`:'Waiting for fix'],['Fix interval',s.fixIntervalMs?`${s.fixIntervalMs.toFixed(0)} ms`:'—'],['Compass bearing',s.rawHeading===null?'—':`${s.rawHeading.toFixed(1)}° (sensor)`],['Compass',s.mode!=='gps'?'Off':s.compass==='on'?(s.compassAccuracy!==null?`±${s.compassAccuracy.toFixed(0)}° · ${s.headingEvents} events`:`${s.headingEvents} events · accuracy not reported`):s.compass]];
+  ['GPS accuracy',s.mode!=='gps'?'Sensors off':s.accuracy!==null?`±${s.accuracy.toFixed(0)} m · ${s.fixes.accepted} used / ${s.fixes.rejected} rejected${s.fixes.lastReason&&s.fixes.lastReason!=='ok'?' ('+s.fixes.lastReason+')':''}`:'Waiting for fix'],['Fix interval',s.fixIntervalMs?`${s.fixIntervalMs.toFixed(0)} ms`:'—'],['GPS speed · course blend',s.mode!=='gps'?'—':`${gps.speed===null?'no speed':gps.speed.toFixed(1)+' m/s'} · ${Math.round(gps.blend*100)} % course`],['Compass bearing',s.rawHeading===null?'—':`${s.rawHeading.toFixed(1)}° (sensor)`],['Compass',s.mode!=='gps'?'Off':s.compass==='on'?(s.compassAccuracy!==null?`±${s.compassAccuracy.toFixed(0)}° · ${s.headingEvents} events`:`${s.headingEvents} events · accuracy not reported`):s.compass]];
  $('measurements').replaceChildren(...entries.flatMap(([label,value])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;return[dt,dd];}));}
 function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min((now-lastTime)/1000,.05);const interval=now-lastTime;lastTime=now;
  if(interval>0&&interval<200){metrics.frameMs=metrics.frameMs?metrics.frameMs*.9+interval*.1:interval;metrics.fps=1000/metrics.frameMs;}
  const live=positioning.state.mode==='gps',sensorCompass=live&&positioning.state.compass==='on'&&gps.rawHeading!==null,compass=sensorCompass&&followCompass&&!drag;
- const targetHeading=sensorCompass?sunCheck.heading(gps.rawHeading):null;
+ // Above walking pace the camera heading blends from the compass toward the GPS course; below it this is the compass alone.
+ gps.blend=live?courseWeight(gps.speed,positioning.state.compassAccuracy):0;
+ const targetHeading=sensorCompass?fuseHeading(sunCheck.heading(gps.rawHeading),gps.course,gps.blend):null;
  if(sensorCompass)player.chevronHeading=smoothHeading(player.chevronHeading??player.heading,targetHeading,dt);else player.chevronHeading=null;
  if(compass)player.heading=smoothHeading(player.heading,targetHeading,dt);
  else player.heading+=(Number(keys.has('ArrowRight'))-Number(keys.has('ArrowLeft')))*65*dt;
  player.pitch=Math.max(-20,Math.min(4,player.pitch+(Number(keys.has('ArrowUp'))-Number(keys.has('ArrowDown')))*25*dt));
  let settled=true;
  if(live){
-  if(gps.target){[player.x,player.y]=smoothPosition([player.x,player.y],gps.target,dt);settled=Math.hypot(gps.target[0]-player.x,gps.target[1]-player.y)<SENSORS.idlePosition;}
+  if(gps.target){
+   // Between fixes at speed, aim ahead of the last fix along the course so the camera glides instead of stepping.
+   const aim=deadReckon(gps.target,gps.speed,gps.course,(now-gps.fixAt)/1000);
+   [player.x,player.y]=smoothPosition([player.x,player.y],aim,dt,SENSORS.positionTau,snapDistanceFor(gps.speed,positioning.state.fixIntervalMs));settled=Math.hypot(aim[0]-player.x,aim[1]-player.y)<SENSORS.idlePosition;
+  }
   if(compass&&Math.abs(headingDelta(player.heading,targetHeading))>SENSORS.idleHeading)settled=false;
   if(sensorCompass&&Math.abs(headingDelta(player.chevronHeading,targetHeading))>SENSORS.idleHeading)settled=false;
  }else{
@@ -180,7 +188,7 @@ $('reset').onclick=()=>{stop();
  if(positioning.state.mode==='gps'){player.pitch=0;if(gps.target){[player.x,player.y]=gps.target;}if(positioning.state.course!==null)player.travelBearing=positioning.state.course;camera();drawMini();updateUI();start();notice(gps.target?'Snapped to the latest GPS fix.':'Waiting for a GPS fix.',2500);return;}
  Object.assign(player,{x:0,y:0,heading:38,pitch:0,travelBearing:null,chevronHeading:null});camera();drawMini();updateUI();if(!busy){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:0,y:0,heading:player.heading});}notice('Returned to the starting point.',2500);};
 $('view-mode').onclick=()=>{followCompass=!followCompass;applyMode();start();notice(followCompass?'View follows the compass again.':'Free look: drag or use turn buttons. GPS still moves your position.',4000);};
-function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();gps.target=null;gps.rawHeading=null;[player.x,player.y]=boundedPosition(player.x,player.y);camera();drawMini();notice('Location off. Manual exploration within 120 m of the loaded area center.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
+function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;[player.x,player.y]=boundedPosition(player.x,player.y);camera();drawMini();notice('Location off. Manual exploration within 120 m of the loaded area center.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
 $('gps').onclick=toggleGps;$('gps-toggle').onclick=toggleGps;$('gps-cancel').onclick=()=>$('gps-dialog').close();
 $('gps-enable').onclick=()=>{$('gps-dialog').close();followCompass=true;stop();positioning.enable().then(ok=>{if(ok)notice('Waiting for your location…');});};
 $('road-cache-toggle').onclick=()=>{roadCacheEnabled=!roadCacheEnabled;try{localStorage.setItem('navigator-roads-enabled',String(roadCacheEnabled));}catch{}if(roadCacheEnabled)startRoadCache();else roadWorker?.postMessage({type:'pause'});showRoadCache();};
@@ -195,4 +203,4 @@ let installPrompt;addEventListener('beforeinstallprompt',e=>{e.preventDefault();
 if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;$('offline-status').textContent='App and bundled area are ready offline. Live building areas last for this session; downloaded road packages stay on this device. iPhone: Share → Add to Home Screen.';}).catch(()=>{$('offline-status').textContent='Offline setup failed. Keep this tab online and reload to retry.';});}else $('offline-status').textContent='Offline caching is enabled in the production build.';
 applyMode();
 // Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype E.
-window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});
+window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

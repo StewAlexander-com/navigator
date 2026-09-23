@@ -79,6 +79,37 @@ await deniedPage.locator('#menu').click();await deniedPage.locator('#gps-toggle'
 await deniedPage.waitForFunction(()=>window.navigatorDiagnostics().sensors.error==='denied',null,{timeout:10000});
 d=await diag(deniedPage);assert.equal(d.sensors.mode,'manual');assert.ok((await deniedPage.locator('#notice').innerText()).includes('denied'));
 await deniedPage.keyboard.down('KeyW');await deniedPage.waitForTimeout(300);await deniedPage.keyboard.up('KeyW');assert.ok((await diag(deniedPage)).player.y>0);assert.deepEqual(deniedErrors,[]);
-const gps={firstFixMs,easeMs,final:await diag(gpsPage)};
+// Driving at 60 mph (27 m/s due north, 1 Hz, ±4 m). Playwright 1.62 drops coords.speed/heading, so fixes are dispatched
+// through a page-side watchPosition shim that supplies them exactly. A synthetic in-car compass jitters ±30° at 10 Hz.
+const driveContext=await browser.newContext({viewport:{width:1440,height:900},permissions:['geolocation']});const driveErrors=[],driveRequests=[];
+await driveContext.route('https://overpass-api.de/**',route=>route.fulfill({path:'public/osm-snapshot.json',contentType:'application/json'}));
+await driveContext.addInitScript(()=>{const watchers=new Map();let nextId=0;
+ window.__fix=c=>{const position={coords:{latitude:c.latitude,longitude:c.longitude,accuracy:c.accuracy??4,altitude:null,altitudeAccuracy:null,heading:c.heading??null,speed:c.speed??null},timestamp:Date.now()};for(const ok of watchers.values())ok(position);};
+ navigator.geolocation.watchPosition=ok=>{watchers.set(++nextId,ok);return nextId;};navigator.geolocation.clearWatch=id=>{watchers.delete(id);};});
+const drivePage=await driveContext.newPage();drivePage.on('pageerror',e=>driveErrors.push(e.message));drivePage.on('console',m=>{if(m.type()==='error')driveErrors.push(m.text());});drivePage.on('request',r=>driveRequests.push(r.url()));
+await drivePage.goto('http://127.0.0.1:4173/navigator/');await drivePage.waitForFunction(()=>window.navigatorDiagnostics?.().ready,null,{timeout:20000});
+await drivePage.locator('#gps').click();await drivePage.locator('#gps-enable').click();await drivePage.waitForTimeout(300);
+await drivePage.evaluate(h=>window.__fix({latitude:h.latitude,longitude:h.longitude,accuracy:4,speed:0,heading:null}),HOME);
+await drivePage.waitForFunction(()=>window.navigatorDiagnostics().sensors.fixes.accepted>=1,null,{timeout:10000});
+// Per-frame probe in absolute metres north of HOME (independent of re-anchoring), plus the noisy compass.
+await drivePage.evaluate(lat=>{window.__probe=[];const M=111319.49;(function sample(){const d=window.navigatorDiagnostics();window.__probe.push([performance.now(),d.player.y+(d.area.origin[1]-lat)*M,d.player.heading]);requestAnimationFrame(sample);})();
+ let t=0;window.__compass=setInterval(()=>{t+=.1;window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute',{alpha:360-(90+30*Math.sin(t)),beta:0,gamma:0,absolute:true}));},100);},HOME.latitude);
+await drivePage.waitForFunction(()=>window.navigatorDiagnostics().sensors.compass==='on',null,{timeout:5000});
+const DRIVE_S=30,M=111319.49;
+for(let s=1;s<=DRIVE_S;s++){await drivePage.evaluate(c=>window.__fix(c),{latitude:HOME.latitude+27*s/M,longitude:HOME.longitude,accuracy:4,speed:27,heading:0});await drivePage.waitForTimeout(1000);}
+await drivePage.waitForTimeout(500);const drive=await diag(drivePage);const probe=await drivePage.evaluate(()=>{clearInterval(window.__compass);return window.__probe;});
+assert.equal(drive.sensors.fixes.rejected,0,`rejected ${drive.sensors.fixes.rejected} (${drive.sensors.fixes.lastReason})`);assert.equal(drive.sensors.fixes.accepted,DRIVE_S+1);
+assert.ok(drive.sensors.fixIntervalMs<1500,`fix interval ${drive.sensors.fixIntervalMs}`);assert.equal(drive.gps.speed,27);assert.equal(drive.gps.blend,1);
+// The camera heading follows the 0° GPS course despite a compass swinging 60–120°; the chevron shares it.
+assert.ok(Math.abs(((drive.player.heading%360)+540)%360-180)<5,`heading ${drive.player.heading}`);assert.ok(Math.abs(((drive.metrics.chevron.bearing%360)+540)%360-180)<5);
+assert.equal(await drivePage.locator('#heading-source').innerText(),'GPS COURSE');
+// Continuity: no per-frame teleport (the pre-fix failure mode was a 108 m snap every 4 s) and no backwards motion.
+let maxStep=0,backwards=0;for(let i=1;i<probe.length;i++){const step=probe[i][1]-probe[i-1][1];maxStep=Math.max(maxStep,step);if(step<-0.05)backwards++;}
+assert.ok(probe.length>DRIVE_S*10,`only ${probe.length} frames sampled`);assert.ok(maxStep<10,`max per-frame step ${maxStep} m`);assert.equal(backwards,0,`${backwards} backwards frames`);
+const travelled=probe[probe.length-1][1]-probe[0][1];assert.ok(travelled>27*DRIVE_S*.8&&travelled<27*DRIVE_S*1.1,`travelled ${travelled} m`);
+const driveOverpass=driveRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length;assert.ok(driveOverpass>=1&&driveOverpass<=5,`${driveOverpass} Overpass requests`);
+assert.ok(driveRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.deepEqual(driveErrors,[]);
+await drivePage.locator('#stats-toggle').click();await drivePage.screenshot({path:'test-results/drive.png'});await driveContext.close();
+const gps={firstFixMs,easeMs,final:await diag(gpsPage),drive:{frames:probe.length,maxStepM:maxStep,travelledM:travelled,overpassRequests:driveOverpass,heading:drive.player.heading,fixes:drive.sensors.fixes}};
 const results={errors,badResponses,requests,moving,offline,viewport:{width:390,height:844},overflow,gps};await fs.writeFile('test-results/browser-results.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));
 await browser.close();

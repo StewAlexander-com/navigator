@@ -180,3 +180,13 @@ Recorded 2026-09-23 in local headless Chromium on macOS. A confidence-gated "You
 - `npm run test:stream`, `test:sun`, `test:street-label`, `test:road-cache`, `test:building-styles`, `test:chevron`: passed.
 
 Cost and limits: one small worker message per accepted fix (≤ 1 Hz) with a bounds scan and a single point-in-polygon; one DOM update; no geometry or draw calls. Multipath near tall walls can place an outdoor fix inside a footprint; courtyards and footprints missing from OSM produce no hint. Not tested on a phone indoors.
+
+## v0.1.17 — overlay layout
+
+Recorded 2026-09-23 in local headless Chromium on macOS. Pills (notice with progress strip, indoor hint, street pill, sun and view-mode buttons, road-status line) must never overlap each other or anchored UI at any viewport; move first, shrink only when no slot fits.
+
+- `npm test`: 80 passed, 0 failed (76 before). New `tests/layout.test.mjs`: a free pill keeps its position and ignores obstacles outside its column; a blocked pill moves to the nearest free slot below or above (exact ties move down), stacks past several obstacles and is clamped inside the viewport; with no slot tall enough it shrinks into the largest gap, centred, with a 60 % floor even when the gap is smaller; a gap just tall enough is used at full size; pair counting.
+- `npm run test:browser`: passed. Manual and GPS phone layouts report zero overlaps. In the Mebane context with notice, indoor pill and street pill visible: 1440 × 900 — nothing moved or shrunk; 390 × 844 — the indoor pill (designed at the notice's row) moved below the notice at full size, street pill below it; 390 × 600 — the indoor pill shrank to about 66 % because no slot in its column could fit it; zero overlaps and zero fixed-UI overlaps at each size. Probing 1024 × 480 separately also gave zero overlaps (the street pill shrank to 67 %).
+- `npm run test:stream`, `test:sun`, `test:street-label`, `test:road-cache`, `test:building-styles`, `test:chevron`: passed.
+
+Limits: movement is vertical within a pill's own column; the resolver does not reflow anchored UI (brand, compass, minimap, bottom bar), whose CSS positions are already collision-free at the tested sizes. A shrunk pill at 60 % remains legible on the tested displays; physical-phone legibility is not verified.

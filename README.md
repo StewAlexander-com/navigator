@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.16 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.17 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -155,6 +155,12 @@ Tag semantics: [OSM building](https://wiki.openstreetmap.org/wiki/Key:building),
 The 15 m/s plausibility gate was a walking constant applied to cars: with 1 Hz fixes it accepts at most 15 m/s plus twice the reported accuracy, so at 27 m/s a good receiver (±3–6 m) had three of every four fixes rejected as implausible and the fourth forced through as "recovered", a 108 m jump every 4 s that exceeded the 45 m snap threshold and teleported the camera. Better accuracy made it worse. The camera heading was also 100 % magnetometer, inside a steel car body.
 
 Four additive rules in `src/sensors.js`, each derived from `coords.speed` and inert without it or below walking pace: the gate allows max(15 m/s, 1.5 × reported speed); the snap threshold is max(45 m, 3 × speed × fix interval); from 3 m/s the eased target is the last fix advanced along the course for up to 2 s (dead reckoning); and from 3 m/s the camera heading blends from compass toward course, fully at 7 m/s or when compass accuracy is reported worse than 25°. Manual mode, walking GPS and the bundled area behave exactly as before; the desktop Playwright fixes carry no speed and exercise the unchanged path.
+
+### Overlay layout (v0.1.17)
+
+No pill may sit on top of another, whatever the viewport. `src/layout.js` is a small pure resolver: anchored UI (brand and header buttons, area name, compass, minimap, bottom bar, footer, performance panel) are obstacles; the sun button, view-mode button, notice (with its progress strip), indoor pill and road-status line are placed in that priority order, and the street pill is placed per frame against the cached result. Each pill keeps its designed CSS position when that is free; otherwise it moves vertically to the nearest free slot in its own column (ties move down, away from the compass); only when no slot in the column can hold it does it shrink into the largest gap, never below 60 %. The resolver runs once per UI tick or layout change (about 5 Hz while moving, on notice/pill changes and on resize), not per frame; the street pill's per-frame step is a handful of rectangle tests against cached obstacles. The Performance diagnostics expose `layout.overlaps` (pairs of visible overlays that intersect) and `layout.fixedOverlaps`; both must be zero.
+
+Validation: 80 unit tests (four new: free space keeps the designed position and ignores obstacles outside the column; nearest-slot moves below/above with tie-break and viewport clamping; shrink into the largest gap centred with the 60 % floor; overlap counting). The browser check asserts zero overlaps in the manual and GPS phone layouts and, in the Mebane context with the notice, indoor pill and street pill all visible, at 1440 × 900 (nothing moved), 390 × 844 (indoor pill moved below the notice at full size) and 390 × 600 (indoor pill shrunk to about 66 % because no slot fit). Screenshots `layout-phone.png` and `layout-short-phone.png`.
 
 ### Indoor hint (v0.1.16)
 

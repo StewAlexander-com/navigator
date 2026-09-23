@@ -9,6 +9,7 @@ import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition} from './world.
 import {nearestStreet} from './street-label.js';
 import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import {progressFraction, progressText, updateRate} from './progress.js';
+import {indoorVerdict, INDOOR} from './indoor.js';
 import './style.css';
 
 const $=id=>document.getElementById(id);
@@ -59,6 +60,10 @@ function startRoadCache(){
 // speed-aware rules in sensors.js (dead reckoning, snap threshold, course fusion). `blend` is the current course weight.
 // Live-area failures back off 30 s → 5 min (`failures`, `retryAt`, honouring Retry-After); `prefetch` is the square the
 // worker already holds ahead of the car, if any, so the edge swap needs no download.
+// Indoor hint state: the latest verdict and how many fixes in a row had none (hysteresis before hiding the pill).
+const indoor={id:0,verdict:null,misses:0,located:null};
+function locate(){if(!gps.target||positioning.state.mode!=='gps')return;worker.postMessage({type:'locate',id:++indoor.id,x:gps.target[0],y:gps.target[1],origin:area.origin});}
+function showIndoor(){const v=indoor.verdict,show=!!v&&positioning.state.mode==='gps';$('indoor-pill').hidden=!show;if(show){$('indoor-text').textContent=v.text;$('indoor-meta').textContent=`GPS HINT · ${v.level==='likely'?'HIGH':'LOW'} CONFIDENCE · ±${Math.round(v.accuracy)} m`;}}
 const gps={target:null,rawHeading:null,retryAt:-Infinity,failures:0,retryMs:0,fixAt:0,speed:null,course:null,blend:0,prefetch:null,prefetchId:0,prefetching:false,prefetchRetryAt:-Infinity,prefetches:0};
 const metrics={renderedFrames:0,drawCalls:0,vertices:0,triangles:0,buildings:0,geometryBytes:0,roadVertices:0,frameMs:null,fps:null,queryMs:null,responseBytes:null};
 const keys=new Set();let ready=false,worldLayer,roads=[],busy=false,lastBuild=[0,0],lastStreamHeading=38,requestId=0,frameId=0,lastTime=0,uiTime=0,noticeTimer,drag=null,offlineReady=false;
@@ -107,7 +112,7 @@ const positioning=createPositioning({
   gps.target=toLocal([fix.lng,fix.lat],area.origin);gps.fixAt=performance.now();gps.speed=Number.isFinite(fix.speed)?fix.speed:null;gps.course=positioning.state.course;
   if(course!==null)player.travelBearing=course;
   if(positioning.state.fixes.accepted===1){[player.x,player.y]=gps.target;camera();notice(`Location found (±${Math.round(fix.accuracy)} m). ${positioning.state.compass==='on'?'Turn to look around.':'Drag to look around.'}`,6000);}
-  ensureAreaCovers(fix);sendRoadPosition();start();
+  ensureAreaCovers(fix);sendRoadPosition();locate();start();
  },
  onHeading(){gps.rawHeading=positioning.state.rawHeading;sunCheck?.onHeading();const target=sunCheck?.heading(gps.rawHeading)??gps.rawHeading;if(Math.abs(headingDelta(player.chevronHeading??player.heading,target))>SENSORS.idleHeading||(followCompass&&!drag&&Math.abs(headingDelta(player.heading,target))>SENSORS.idleHeading))start();},
  onError(kind){notice(kind==='denied'?'Location permission was denied. Manual exploration continues.':kind==='unavailable'?'Location is unavailable right now. Waiting for a fix…':'No location fix yet. Move to open sky or wait.',6000);},
@@ -145,6 +150,11 @@ function reanchor(origin,bbox){
  worldLayer.setOrigin(origin);cacheRoads=null;lastRoadPoint=null;sendRoadPosition();
 }
 worker.onmessage=({data})=>{
+ if(data.type==='located'){
+  if(data.id!==indoor.id)return;indoor.located=data.located;const verdict=indoorVerdict(data.located,positioning.state.accuracy,gps.speed);
+  if(verdict){indoor.verdict=verdict;indoor.misses=0;}else if(++indoor.misses>=INDOOR.holdFixes)indoor.verdict=null;
+  showIndoor();return;
+ }
  if(data.type==='progress'){
   if(data.task==='prefetch'?data.id===gps.prefetchId:data.id===requestId)updateProgress(data.task==='prefetch'?'prefetch':'area',{bytes:data.bytes??null,total:data.total??null,detail:PHASES[data.phase]??''});
   return;
@@ -163,6 +173,7 @@ worker.onmessage=({data})=>{
  if(data.areaLoaded){
   gps.failures=0;gps.retryMs=0;gps.retryAt=-Infinity;if(gps.prefetch&&gps.prefetch.bbox.join()===data.bbox.join())gps.prefetch=null;
   if(data.origin.join()!==area.origin.join()||data.bbox.join()!==area.bbox.join())reanchor(data.origin,data.bbox);
+  locate();
   area.live=data.live;area.radius=data.radius;area.provider=data.provider;area.cached=!!data.cached;area.kinds=data.kinds||null;area.prior=!!data.prior;metrics.responseBytes=data.bytes;
   $('area-name').textContent=data.radius?'Live area around you':'Downtown Los Angeles';
   $('data-state').textContent=`${data.live?'Live '+data.provider:'Bundled OSM'} · ${data.timestamp?data.timestamp.slice(0,10):data.radius?'this session':'fixed LA area'}${data.radius?` · ${data.radius*2} m square${data.cached?' · reused':''}`:''}`;
@@ -257,7 +268,7 @@ $('reset').onclick=()=>{stop();
  if(positioning.state.mode==='gps'){player.pitch=0;if(gps.target){[player.x,player.y]=gps.target;}if(positioning.state.course!==null)player.travelBearing=positioning.state.course;camera();drawMini();updateUI();start();notice(gps.target?'Snapped to the latest GPS fix.':'Waiting for a GPS fix.',2500);return;}
  Object.assign(player,{x:0,y:0,heading:38,pitch:0,travelBearing:null,chevronHeading:null});camera();drawMini();updateUI();if(!busy){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:0,y:0,heading:player.heading});}notice('Returned to the starting point.',2500);};
 $('view-mode').onclick=()=>{followCompass=!followCompass;applyMode();start();notice(followCompass?'View follows the compass again.':'Free look: drag or use turn buttons. GPS still moves your position.',4000);};
-function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;gps.prefetch=null;[player.x,player.y]=boundedPosition(player.x,player.y);camera();drawMini();notice('Location off. Manual exploration within 120 m of the loaded area center.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
+function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;gps.prefetch=null;indoor.verdict=null;indoor.misses=0;showIndoor();[player.x,player.y]=boundedPosition(player.x,player.y);camera();drawMini();notice('Location off. Manual exploration within 120 m of the loaded area center.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
 $('gps').onclick=toggleGps;$('gps-toggle').onclick=toggleGps;$('gps-cancel').onclick=()=>$('gps-dialog').close();
 $('gps-enable').onclick=()=>{$('gps-dialog').close();followCompass=true;stop();positioning.enable().then(ok=>{if(ok)notice('Waiting for your location…');});};
 $('road-cache-toggle').onclick=()=>{roadCacheEnabled=!roadCacheEnabled;try{localStorage.setItem('navigator-roads-enabled',String(roadCacheEnabled));}catch{}if(roadCacheEnabled)startRoadCache();else roadWorker?.postMessage({type:'pause'});showRoadCache();};
@@ -272,4 +283,4 @@ let installPrompt;addEventListener('beforeinstallprompt',e=>{e.preventDefault();
 if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;$('offline-status').textContent='App and bundled area are ready offline. Live building areas last for this session; downloaded road packages stay on this device. iPhone: Share → Add to Home Screen.';}).catch(()=>{$('offline-status').textContent='Offline setup failed. Keep this tab online and reload to retry.';});}else $('offline-status').textContent='Offline caching is enabled in the production build.';
 applyMode();
 // Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype E.
-window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},progress:{task:progress.task,label:progress.label,bytes:progress.bytes,total:progress.total,fraction:progressFraction(progress),detail:progress.detail,visible:!$('progress').hidden,text:$('progress-meta').textContent},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend,failures:gps.failures,retryMs:gps.retryMs,retryInMs:gps.retryAt===-Infinity?null:Math.max(0,gps.retryAt-performance.now()),prefetch:gps.prefetch,prefetching:gps.prefetching,prefetches:gps.prefetches},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});
+window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},indoor:{verdict:indoor.verdict,located:indoor.located,misses:indoor.misses,visible:!$('indoor-pill').hidden},progress:{task:progress.task,label:progress.label,bytes:progress.bytes,total:progress.total,fraction:progressFraction(progress),detail:progress.detail,visible:!$('progress').hidden,text:$('progress-meta').textContent},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend,failures:gps.failures,retryMs:gps.retryMs,retryInMs:gps.retryAt===-Infinity?null:Math.max(0,gps.retryAt-performance.now()),prefetch:gps.prefetch,prefetching:gps.prefetching,prefetches:gps.prefetches},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

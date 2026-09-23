@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.15 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.16 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
@@ -108,6 +108,8 @@ The ingest step uses Shapely/GEOS to node street lines and polygonize their face
 
 ### Street label
 
+A second, amber pill (`#indoor-pill`) appears only when a GPS fix lies confidently inside a loaded footprint; see “Indoor hint”.
+
 A compact translucent pill floats centered at the camera’s 1.65 m eye level, clearly above the 0.75 m chevron in demo and GPS modes. It uses named OSM street/path segments retained through both chunk lookup paths, matching player position to rendered road surfaces rather than viewing direction or centerline distance alone. A named street containing the position takes precedence over a nearby unnamed footway. This remains approximate matching, not route guidance. Small distance hysteresis reduces intersection flicker. Missing names and unmatched street geometry are explicit; no reverse-geocoding service or additional permission is used.
 
 The pill ignores pointer input, has bounded width and text overflow, and hides when its anchor approaches the upper sightline or bottom controls. It is a screen overlay for map context; unlike the chevron, its text is not occluded by buildings. Run `npm run test:street-label` for demo/live labeling, phone bounds and drag-through checks.
@@ -153,6 +155,12 @@ Tag semantics: [OSM building](https://wiki.openstreetmap.org/wiki/Key:building),
 The 15 m/s plausibility gate was a walking constant applied to cars: with 1 Hz fixes it accepts at most 15 m/s plus twice the reported accuracy, so at 27 m/s a good receiver (±3–6 m) had three of every four fixes rejected as implausible and the fourth forced through as "recovered", a 108 m jump every 4 s that exceeded the 45 m snap threshold and teleported the camera. Better accuracy made it worse. The camera heading was also 100 % magnetometer, inside a steel car body.
 
 Four additive rules in `src/sensors.js`, each derived from `coords.speed` and inert without it or below walking pace: the gate allows max(15 m/s, 1.5 × reported speed); the snap threshold is max(45 m, 3 × speed × fix interval); from 3 m/s the eased target is the last fix advanced along the course for up to 2 s (dead reckoning); and from 3 m/s the camera heading blends from compass toward course, fully at 7 m/s or when compass accuracy is reported worse than 25°. Manual mode, walking GPS and the bundled area behave exactly as before; the desktop Playwright fixes carry no speed and exercise the unchanged path.
+
+### Indoor hint (v0.1.16)
+
+When an accepted GPS fix falls inside a loaded OSM footprint, an amber pill under the view-mode button says so — with a stated confidence. The worker answers each accepted fix (at most one per fix, ≤ 1 Hz) with the footprint containing the fix and how deep inside it the fix sits (distance to the nearest edge, holes included); `src/indoor.js` turns that into a verdict: depth of at least one accuracy radius → "You are probably inside a home" (HIGH CONFIDENCE); at least 0.3 radii → "You may be inside …" (LOW CONFIDENCE); shallower, or moving faster than 3 m/s, → nothing. The pill names the building when OSM does (`name`), otherwise its inferred style (a home, an apartment building, a shop building…), and hides after two consecutive fixes without a verdict so an edge does not flicker. A ±60 m fix inside a 10 m house is therefore never called "inside". Cost: a bounds scan plus one point-in-polygon in the worker per fix, one small message, one DOM update; no geometry, draw calls or per-frame work, and nothing leaves the device. This is a hint from GPS geometry and footprints, not indoor positioning: multipath near tall walls can place an outdoor fix inside a footprint and a courtyard fix outside one.
+
+Validation: 76 unit tests (three new: edge depth with holes and bounds rejection; verdict gating by depth/accuracy/speed and building naming; the real Mebane fixture — the centre of `way/1179878853` is "probably inside a home" at ±4 m, "may be" at ±12 m, nothing at ±40 m, a road is outside, and `Lambs Chapel` is named). The worker test covers the `locate` message and frame check. The Mebane browser context starts at that house with a ±4 m fix, asserts the pill's text and HIGH CONFIDENCE label, then hides it after two ±40 m fixes, and confirms no verdict during the 27 m/s drive.
 
 ### Progress feedback (v0.1.15)
 

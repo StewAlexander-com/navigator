@@ -70,7 +70,7 @@ export function parseWorld(raw, origin = ORIGIN) {
     const landuse=contextLanduse(zones,bounds),nearRoad=landuse?null:nearestRoadClass(bounds,roads);
     const residential=landuse==='residential'||(!landuse&&prior&&residentialRoads.has(nearRoad));
     const h=height(f.properties,{residential,area}),heightDefault=!hasHeightTag(f.properties);
-    buildings.push({rings,bounds,height:h,id:f.id,style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior})});
+    buildings.push({rings,bounds,height:h,id:f.id,name:String(f.properties.name||'').slice(0,80),style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior})});
   }
   for(const b of buildings)b.frontEdge=storefrontEdge(b,roads);
   if (!buildings.length) throw new Error('No usable building footprints returned.');

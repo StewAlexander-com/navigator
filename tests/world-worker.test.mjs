@@ -68,3 +68,13 @@ test('loads and prefetches report download bytes, the parse phase and the build 
  // A cache hit reports nothing to download.
  messages.length=0;const hit=await send({type:'load',center:ahead,radius:LIMITS.area,fix:ahead});assert.equal(hit.cached,true);assert.deepEqual(messages.filter(m=>m.type==='progress'&&m.id===hit.id).map(m=>m.phase),['building']);
 });
+test('locate answers with the containing footprint only for the current world frame',async()=>{
+ fetched.length=0;script=()=>({status:200,body:snapshot});
+ const c=toLngLat(-180000,0);const r=await send({type:'load',center:c,radius:LIMITS.area,fix:c});assert.equal(r.type,'ready');
+ const {parseWorld}=await import('../src/world.js');const world=parseWorld(JSON.parse(snapshot),c);const b=world.buildings.find(x=>x.rings[0].length===4)||world.buildings[0];
+ const centre=[(b.bounds[0]+b.bounds[2])/2,(b.bounds[1]+b.bounds[3])/2];
+ const inside=await send({type:'locate',x:centre[0],y:centre[1],origin:c});assert.equal(inside.type,'located');
+ if(inside.located){assert.equal(inside.located.id,b.id);assert.ok(inside.located.depth>0);assert.ok('kind' in inside.located&&'name' in inside.located);}
+ const stale=await send({type:'locate',x:centre[0],y:centre[1],origin:[0,0]});assert.equal(stale.located,null);
+ const nowhere=await send({type:'locate',x:1e6,y:1e6,origin:c});assert.equal(nowhere.located,null);assert.equal(fetched.filter(overpass).length,1);
+});

@@ -2,6 +2,7 @@ import {parseWorld, LIMITS, BBOX, ORIGIN, toLocal} from './world.js';
 import {areaAround, areaCovers} from './sensors.js';
 import {createChunkStream} from './chunks.js';
 import {validateSectorGraph} from './sectors.js';
+import {locateBuilding} from './indoor.js';
 let world,stream;
 // Retry-After may be seconds or an HTTP date; anything unparseable falls back to 60 s.
 function retryAfterMs(response){const raw=response.headers.get('retry-after');if(!raw)return 60000;const seconds=Number(raw);if(Number.isFinite(seconds))return Math.max(1000,seconds*1000);const at=Date.parse(raw);return Number.isFinite(at)?Math.max(1000,at-Date.now()):60000;}
@@ -67,6 +68,8 @@ async function fetchSquare(center,radius,report=null){const r=await downloadSqua
 self.onmessage = async ({data}) => {
   const start = performance.now();
   const report=p=>self.postMessage({type:'progress',id:data.id,task:data.type,...p});
+  // Indoor hint: which loaded footprint contains the fix, if any. Only meaningful in the current world's local frame.
+  if (data.type === 'locate') {self.postMessage({type:'located',id:data.id,located:world&&Array.isArray(data.origin)&&data.origin.join()===world.origin.join()?locateBuilding(world.buildings,[data.x,data.y]):null});return;}
   if (data.type === 'prefetch') {
     let mine=null;
     try {

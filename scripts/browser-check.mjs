@@ -148,6 +148,8 @@ await limitContext.close();
 // contributors, ODbL) where every footprint is bare building=yes. Most must classify as homes, none as offices, and a
 // 60 mph drive through it must not teleport the camera.
 const MEBANE={latitude:36.099202,longitude:-79.3491509};
+// Centre of OSM way/1179878853, a 173 m² building=yes footprint 30 m from the square centre that classifies as a home.
+const HOUSE={latitude:36.0994689,longitude:-79.3492096};
 const mebaneContext=await browser.newContext({viewport:{width:1440,height:900},permissions:['geolocation']});const mebaneErrors=[],mebaneRequests=[];
 // The first Overpass answer is held for 1.5 s so the download progress strip can be observed while the request is in flight.
 let mebaneAnswers=0;await mebaneContext.route('https://overpass-api.de/**',async route=>{if(mebaneAnswers++===0)await new Promise(r=>setTimeout(r,1500));await route.fulfill({path:/\(36\.\d+,-79\./.test(decodeURIComponent(route.request().url()))?'tests/fixtures/mebane-800m.json':'public/osm-snapshot.json',contentType:'application/json'});});
@@ -155,20 +157,26 @@ await mebaneContext.addInitScript(fixShim);
 const mebanePage=await mebaneContext.newPage();mebanePage.on('pageerror',e=>mebaneErrors.push(e.message));mebanePage.on('console',m=>{if(m.type()==='error')mebaneErrors.push(m.text());});mebanePage.on('request',r=>mebaneRequests.push(r.url()));
 await mebanePage.goto('http://127.0.0.1:4173/navigator/');await mebanePage.waitForFunction(()=>window.navigatorDiagnostics?.().ready,null,{timeout:20000});
 await mebanePage.locator('#gps').click();await mebanePage.locator('#gps-enable').click();await mebanePage.waitForTimeout(300);
-await mebanePage.evaluate(c=>window.__fix(c),{...MEBANE,accuracy:5,speed:0,heading:null});
+await mebanePage.evaluate(c=>window.__fix(c),{...HOUSE,accuracy:4,speed:0,heading:null});
 await mebanePage.waitForFunction(()=>window.navigatorDiagnostics().progress.task==='area',null,{timeout:5000});await mebanePage.waitForTimeout(600);
 const downloading=await diag(mebanePage);assert.equal(downloading.progress.visible,true);assert.ok(downloading.progress.label.startsWith('Downloading the OpenStreetMap area'),downloading.progress.label);assert.ok(/00:0\d/.test(downloading.progress.text),downloading.progress.text);assert.ok(await mebanePage.locator('#progress').isVisible());await mebanePage.screenshot({path:'test-results/progress-download.png'});
 await mebanePage.waitForFunction(()=>{const d=window.navigatorDiagnostics();return d.area.live===true&&!d.busy&&d.area.kinds&&d.metrics.buildings>0;},null,{timeout:20000});await mebanePage.waitForTimeout(800);
-let mb=await diag(mebanePage);assert.equal(mb.progress.visible,false);assert.equal(mb.progress.task,null);assert.equal(mb.area.provider,'Overpass');assert.equal(mb.area.radius,400);assert.equal(mb.area.prior,true);
+let mb=await diag(mebanePage);assert.equal(mb.progress.visible,false);assert.equal(mb.progress.task,null);
+// Indoor hint: a ±4 m fix at the house centre is "probably inside"; two ±40 m fixes there carry too little depth and the pill hides.
+await mebanePage.waitForFunction(()=>window.navigatorDiagnostics().indoor.verdict?.level==='likely',null,{timeout:5000});
+const inside=await diag(mebanePage);assert.equal(inside.indoor.visible,true);assert.equal(inside.indoor.located.id,'way/1179878853');assert.equal(inside.indoor.verdict.text,'You are probably inside a home');assert.ok(await mebanePage.locator('#indoor-pill').isVisible());assert.equal(await mebanePage.locator('#indoor-text').innerText(),'You are probably inside a home');assert.ok((await mebanePage.locator('#indoor-meta').innerText()).includes('HIGH CONFIDENCE'));
+await mebanePage.screenshot({path:'test-results/indoor-hint.png'});
+for(let i=0;i<2;i++){await mebanePage.evaluate(c=>window.__fix(c),{...HOUSE,accuracy:40,speed:0,heading:null});await mebanePage.waitForTimeout(400);}
+await mebanePage.waitForFunction(()=>window.navigatorDiagnostics().indoor.verdict===null,null,{timeout:5000});assert.equal(await mebanePage.locator('#indoor-pill').isVisible(),false);assert.equal((await diag(mebanePage)).indoor.located.id,'way/1179878853');assert.equal(mb.area.provider,'Overpass');assert.equal(mb.area.radius,400);assert.equal(mb.area.prior,true);
 assert.equal(mb.area.kinds.reduce((a,b)=>a+b,0),153);assert.ok(mb.area.kinds[1]>=120,`homes ${mb.area.kinds}`);assert.equal(mb.area.kinds[4],0);assert.equal(mb.area.kinds[6],5);
 assert.ok(mb.metrics.buildings>=20,`buildings ${mb.metrics.buildings}`);assert.equal(mb.metrics.drawCalls,7);assert.ok(mb.metrics.vertices<=90000);assert.ok(mb.metrics.fps===null||mb.metrics.fps>0);
 await mebanePage.evaluate(()=>{document.getElementById('notice-text').textContent='';});await mebanePage.screenshot({path:'test-results/mebane.png'});
 // Drive north out of Elizabeth Lane at 27 m/s for 12 s: every fix accepted, no per-frame step above 10 m, nothing backwards.
 await mebanePage.evaluate(lat=>{window.__probe=[];const M=111319.49;(function sample(){const d=window.navigatorDiagnostics();window.__probe.push([performance.now(),d.player.y+(d.area.origin[1]-lat)*M]);requestAnimationFrame(sample);})();},MEBANE.latitude);
-for(let s=1;s<=12;s++){await mebanePage.evaluate(c=>window.__fix(c),{latitude:MEBANE.latitude+27*s/M,longitude:MEBANE.longitude,accuracy:5,speed:27,heading:0});await mebanePage.waitForTimeout(1000);}
+for(let s=1;s<=12;s++){await mebanePage.evaluate(c=>window.__fix(c),{latitude:HOUSE.latitude+27*s/M,longitude:HOUSE.longitude,accuracy:5,speed:27,heading:0});await mebanePage.waitForTimeout(1000);}
 await mebanePage.waitForTimeout(500);mb=await diag(mebanePage);const mebaneProbe=await mebanePage.evaluate(()=>window.__probe);
 let mebaneStep=0,mebaneBack=0;for(let i=1;i<mebaneProbe.length;i++){const step=mebaneProbe[i][1]-mebaneProbe[i-1][1];mebaneStep=Math.max(mebaneStep,step);if(step<-0.05)mebaneBack++;}
-assert.equal(mb.sensors.fixes.rejected,0);assert.equal(mb.sensors.fixes.accepted,13);assert.ok(mebaneProbe.length>100);assert.ok(mebaneStep<10,`max step ${mebaneStep}`);assert.equal(mebaneBack,0);
+assert.equal(mb.sensors.fixes.rejected,0);assert.equal(mb.sensors.fixes.accepted,15);assert.equal(mb.indoor.verdict,null,'never "inside" while driving');assert.ok(mebaneProbe.length>100);assert.ok(mebaneStep<10,`max step ${mebaneStep}`);assert.equal(mebaneBack,0);
 assert.ok(mebaneRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length<=2);assert.ok(mebaneRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.deepEqual(mebaneErrors,[]);
 await mebaneContext.close();
 const gps={firstFixMs,easeMs,final:await diag(gpsPage),drive:{frames:probe.length,maxStepM:maxStep,travelledM:travelled,overpassRequests:driveOverpass,heading:drive.player.heading,fixes:drive.sensors.fixes},mebane:{kinds:mb.area.kinds,buildings:mb.metrics.buildings,maxStepM:mebaneStep,frames:mebaneProbe.length}};

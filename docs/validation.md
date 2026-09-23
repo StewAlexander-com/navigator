@@ -170,3 +170,13 @@ Recorded 2026-09-23 in local headless Chromium on macOS. Motivation: a first GPS
 - `npm run test:stream`, `test:sun`, `test:street-label`, `test:road-cache`, `test:building-styles`, `test:chevron`: passed.
 
 Limits: the determinate bar depends on the service sending an uncompressed body or an honest total; Overpass and GitHub Pages compress JSON, so in practice downloads show bytes and rate with a sweeping bar. GPS acquisition has no knowable total, so it shows elapsed time and the last rejection reason only. Parse and build phases on a phone are not timed here.
+
+## v0.1.16 — indoor hint
+
+Recorded 2026-09-23 in local headless Chromium on macOS. A confidence-gated "You may be / are probably inside …" pill from the accepted GPS fix and the loaded OSM footprints.
+
+- `npm test`: 76 passed, 0 failed (72 before). New: edge depth (rectangle, near edge, courtyard hole) and footprint lookup with bounds rejection, holes and invalid input; verdict gating (depth ≥ 1 × accuracy → likely, ≥ 0.3 × → maybe, less → none; speed above 3 m/s → none; invalid accuracy → none) and wording with OSM names or inferred style; the real Mebane house `way/1179878853` (depth 4–7 m at its centre): likely at ±4 m, maybe at ±12 m, none at ±40 m, a road point outside, `Lambs Chapel` named. Worker `locate` answers only for the current world frame and null elsewhere.
+- `npm run test:browser`: passed. The Mebane context now starts at that house: after the live square loads, the pill shows "You are probably inside a home" with "HIGH CONFIDENCE · ±4 m"; two ±40 m fixes at the same spot hide it (hysteresis of two fixes) while the located footprint is still reported; the 12 s drive at 27 m/s ends with no verdict. Screenshot `indoor-hint.png` inspected (the camera is visibly inside the house's walls). Other contexts unchanged.
+- `npm run test:stream`, `test:sun`, `test:street-label`, `test:road-cache`, `test:building-styles`, `test:chevron`: passed.
+
+Cost and limits: one small worker message per accepted fix (≤ 1 Hz) with a bounds scan and a single point-in-polygon; one DOM update; no geometry or draw calls. Multipath near tall walls can place an outdoor fix inside a footprint; courtyards and footprints missing from OSM produce no hint. Not tested on a phone indoors.

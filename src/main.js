@@ -4,7 +4,7 @@ import {createWorldLayer} from './renderer.js';
 import {updateTravelBearing} from './chevron.js';
 import {createPositioning} from './positioning.js';
 import {createSunCheck} from './sun-check.js';
-import {smoothHeading, smoothPosition, headingDelta, areaCovers, deadReckon, snapDistanceFor, courseWeight, fuseHeading, SENSORS} from './sensors.js';
+import {smoothHeading, smoothPosition, headingDelta, areaCovers, edgeRunway, shouldPrefetch, liveSquare, retryDelay, deadReckon, snapDistanceFor, courseWeight, fuseHeading, SENSORS} from './sensors.js';
 import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition} from './world.js';
 import {nearestStreet} from './street-label.js';
 import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
@@ -15,7 +15,7 @@ maplibregl.setWorkerUrl(mapWorkerUrl);
 maplibregl.setWorkerCount(1);
 const player={x:0,y:0,heading:38,pitch:0,travelBearing:null,chevronHeading:null};
 // The loaded OSM area. `origin` is the local metre frame; GPS re-anchors it when the view radius leaves `bbox`.
-const area={origin:ORIGIN,bbox:BBOX,live:false,radius:null,provider:'Bundled OSM'};
+const area={origin:ORIGIN,bbox:BBOX,live:false,radius:null,provider:'Bundled OSM',cached:false};
 // GPS target pose. The render loop eases the player toward `target`; `rawHeading` is the latest compass reading.
 let sunCheck;
 let followCompass=true;
@@ -56,14 +56,17 @@ function startRoadCache(){
 
 // `target` is the last accepted fix in local metres; `speed`/`course` come from the receiver and drive the
 // speed-aware rules in sensors.js (dead reckoning, snap threshold, course fusion). `blend` is the current course weight.
-const gps={target:null,rawHeading:null,failedAt:-Infinity,fixAt:0,speed:null,course:null,blend:0};
+// Live-area failures back off 30 s → 5 min (`failures`, `retryAt`, honouring Retry-After); `prefetch` is the square the
+// worker already holds ahead of the car, if any, so the edge swap needs no download.
+const gps={target:null,rawHeading:null,retryAt:-Infinity,failures:0,retryMs:0,fixAt:0,speed:null,course:null,blend:0,prefetch:null,prefetchId:0,prefetching:false,prefetchRetryAt:-Infinity,prefetches:0};
 const metrics={renderedFrames:0,drawCalls:0,vertices:0,triangles:0,buildings:0,geometryBytes:0,roadVertices:0,frameMs:null,fps:null,queryMs:null,responseBytes:null};
 const keys=new Set();let ready=false,worldLayer,roads=[],busy=false,lastBuild=[0,0],lastStreamHeading=38,requestId=0,frameId=0,lastTime=0,uiTime=0,noticeTimer,drag=null,offlineReady=false;
 const worker=new Worker(new URL('./world.worker.js',import.meta.url),{type:'module'});
 const started=performance.now();
 function notice(message,timeout=0){clearTimeout(noticeTimer);$('notice').textContent=message;if(timeout)noticeTimer=setTimeout(()=>{$('notice').textContent='';},timeout);}
-// `live` refreshes the fixed LA box; `center` downloads a square around a GPS fix; neither → bundled snapshot.
-function request({live=false,center=null,radius=null}={}){if(busy)return false;busy=true;$('refresh').disabled=true;worker.postMessage({type:'load',id:++requestId,url:new URL('osm-snapshot.json',document.baseURI).href,live,center,radius,heading:player.travelBearing??player.heading,x:center?0:player.x,y:center?0:player.y});if(center)notice('Downloading the OpenStreetMap area around you…');else if(live)notice('Refreshing this area from OpenStreetMap…');return true;}
+// `live` refreshes the fixed LA box; `center` loads a square around (or ahead of) the GPS `fix`, reusing a square the worker
+// already holds unless `fresh`; neither → bundled snapshot.
+function request({live=false,center=null,radius=null,fix=null,fresh=false}={}){if(busy)return false;busy=true;$('refresh').disabled=true;worker.postMessage({type:'load',id:++requestId,url:new URL('osm-snapshot.json',document.baseURI).href,live,center,radius,fix,fresh,heading:player.travelBearing??player.heading,x:center?0:player.x,y:center?0:player.y});if(center)notice('Downloading the OpenStreetMap area around you…');else if(live)notice('Refreshing this area from OpenStreetMap…');return true;}
 const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e6cca8'}}]},center:ORIGIN,zoom:18,pitch:90,maxPitch:95,centerClampedToGround:false,interactive:false,attributionControl:false,pixelRatio:Math.min(devicePixelRatio,1.5),maxTileCacheSize:16,renderWorldCopies:false,canvasContextAttributes:{antialias:false,preserveDrawingBuffer:false}});
 function fitView(){map.setVerticalFieldOfView(innerWidth<700?65:45);if(ready)camera();}
 fitView();addEventListener('resize',fitView);
@@ -87,12 +90,21 @@ const positioning=createPositioning({
 });
 sunCheck=createSunCheck({getSensors:()=>positioning.state,onChange(){applyMode();start();}});
 // Download a new square when the 180 m view radius would leave the loaded data. The bundled LA snapshot is preferred when it covers the fix.
+// At speed the square is larger and centred ahead (liveSquare), and the next one is prefetched before the edge is reached.
 function ensureAreaCovers(fix){
- const [x,y]=toLocal([fix.lng,fix.lat],area.origin);
- if(areaCovers(x,y,area.bbox,area.origin))return;
- if(busy||performance.now()-gps.failedAt<SENSORS.reanchorRetryMs)return;
- const [bx,by]=toLocal([fix.lng,fix.lat],ORIGIN);
- if(areaCovers(bx,by,BBOX,ORIGIN))request();else request({center:[fix.lng,fix.lat]});
+ const [x,y]=toLocal([fix.lng,fix.lat],area.origin),point=[fix.lng,fix.lat];
+ if(areaCovers(x,y,area.bbox,area.origin)){prefetchAhead(point,edgeRunway(x,y,area.bbox,area.origin));return;}
+ if(busy||performance.now()<gps.retryAt)return;
+ const [bx,by]=toLocal(point,ORIGIN);
+ if(areaCovers(bx,by,BBOX,ORIGIN))request();else{const square=liveSquare(point,gps.speed,gps.course);request({center:square.center,radius:square.radius,fix:point});}
+}
+function prefetchAhead(point,runway){
+ if(!shouldPrefetch(runway,gps.speed)||gps.prefetching||performance.now()<gps.prefetchRetryAt||performance.now()<gps.retryAt)return;
+ if(gps.prefetch&&areaCovers(...toLocal(point,gps.prefetch.origin),gps.prefetch.bbox,gps.prefetch.origin))return;
+ // The bundled LA box never needs a download: from a live square, skip the prefetch when the runway ends back inside it.
+ const ahead=liveSquare(point,gps.speed,gps.course,LIMITS.prefetchLeadS),square=liveSquare(ahead.center,gps.speed,gps.course);
+ if(area.live){const exit=liveSquare(point,gps.speed,gps.course,Math.max(0,runway+1)/gps.speed).center;if(areaCovers(...toLocal(exit,ORIGIN),BBOX,ORIGIN))return;}
+ gps.prefetching=true;gps.prefetches++;worker.postMessage({type:'prefetch',id:++gps.prefetchId,center:square.center,radius:square.radius,fix:ahead.center});
 }
 function reanchor(origin,bbox){
  const ll=toLngLat(player.x,player.y,area.origin);
@@ -102,20 +114,30 @@ function reanchor(origin,bbox){
  worldLayer.setOrigin(origin);cacheRoads=null;lastRoadPoint=null;sendRoadPosition();
 }
 worker.onmessage=({data})=>{
+ if(data.type==='prefetched'||data.type==='prefetch-error'){
+  if(data.id!==gps.prefetchId)return;gps.prefetching=false;
+  if(data.type==='prefetched'){if(data.bbox)gps.prefetch={bbox:data.bbox,origin:data.origin,radius:data.radius};}
+  else{gps.prefetchRetryAt=performance.now()+retryDelay(1,data.retryMs);if(data.retryMs)gps.retryAt=Math.max(gps.retryAt,performance.now()+data.retryMs);}
+  return;
+ }
  if(data.id!==requestId)return;busy=false;$('refresh').disabled=false;
- if(data.type==='error'){gps.failedAt=performance.now();notice(ready?(data.oversized?'This area is too dense for the 8 MiB cap. Nearby streets stay empty beyond the loaded data.':'Area download unavailable. Your current area is still usable.'):'Could not load the bundled area. Reload when online.');$('refresh-info').textContent=data.message;return;}
+ if(data.type==='error'){
+  // Exponential backoff with jitter; a Retry-After from the service is never undercut and no second provider is tried on a rate limit.
+  gps.failures++;gps.retryMs=retryDelay(gps.failures,data.retryMs);gps.retryAt=performance.now()+gps.retryMs;
+  notice(ready?(data.oversized?'This area is too dense for the 8 MiB cap. Nearby streets stay empty beyond the loaded data.':`Area download unavailable. Your current area is still usable; next attempt in ${Math.round(gps.retryMs/1000)} s.`):'Could not load the bundled area. Reload when online.');$('refresh-info').textContent=data.message;return;}
  if(data.areaLoaded){
+  gps.failures=0;gps.retryMs=0;gps.retryAt=-Infinity;if(gps.prefetch&&gps.prefetch.bbox.join()===data.bbox.join())gps.prefetch=null;
   if(data.origin.join()!==area.origin.join()||data.bbox.join()!==area.bbox.join())reanchor(data.origin,data.bbox);
-  area.live=data.live;area.radius=data.radius;area.provider=data.provider;metrics.responseBytes=data.bytes;
+  area.live=data.live;area.radius=data.radius;area.provider=data.provider;area.cached=!!data.cached;metrics.responseBytes=data.bytes;
   $('area-name').textContent=data.radius?'Live area around you':'Downtown Los Angeles';
-  $('data-state').textContent=`${data.live?'Live '+data.provider:'Bundled OSM'} · ${data.timestamp?data.timestamp.slice(0,10):data.radius?'this session':'fixed LA area'}${data.radius?` · ${data.radius*2} m square`:''}`;
+  $('data-state').textContent=`${data.live?'Live '+data.provider:'Bundled OSM'} · ${data.timestamp?data.timestamp.slice(0,10):data.radius?'this session':'fixed LA area'}${data.radius?` · ${data.radius*2} m square${data.cached?' · reused':''}`:''}`;
  }
  if(data.roads){baseRoads=data.roads;roads=cacheRoads?.length?cacheRoads:baseRoads;worldLayer.setRoads(roads);}
  if(data.geometry)worldLayer.setBuildings(data.geometry);metrics.stream=data.stream;lastBuild=[data.x,data.y];lastStreamHeading=data.heading;
  if(Math.hypot(player.x-data.x,player.y-data.y)>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  metrics.queryMs=data.ms;
  if(!ready){metrics.firstViewMs=performance.now()-started;ready=true;startRoadCache();showRoadCache();notice('Drag to look. Use the arrows or W A S D to explore, or enable your location.',7000);}
- else if(data.areaLoaded)notice(data.radius?`OpenStreetMap area loaded around you (${data.provider}).`:'OpenStreetMap area refreshed for this session.',5000);
+ else if(data.areaLoaded)notice(data.radius?(data.cached?'OpenStreetMap area reused from this session.':`OpenStreetMap area loaded around you (${data.provider}).`):'OpenStreetMap area refreshed for this session.',5000);
  updateUI();drawMini();camera();if(positioning.state.mode==='gps')start();
 };
 worker.onerror=()=>{busy=false;$('refresh').disabled=false;notice('Map processing failed. Reload to restart the worker.');};
@@ -200,14 +222,14 @@ $('reset').onclick=()=>{stop();
  if(positioning.state.mode==='gps'){player.pitch=0;if(gps.target){[player.x,player.y]=gps.target;}if(positioning.state.course!==null)player.travelBearing=positioning.state.course;camera();drawMini();updateUI();start();notice(gps.target?'Snapped to the latest GPS fix.':'Waiting for a GPS fix.',2500);return;}
  Object.assign(player,{x:0,y:0,heading:38,pitch:0,travelBearing:null,chevronHeading:null});camera();drawMini();updateUI();if(!busy){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:0,y:0,heading:player.heading});}notice('Returned to the starting point.',2500);};
 $('view-mode').onclick=()=>{followCompass=!followCompass;applyMode();start();notice(followCompass?'View follows the compass again.':'Free look: drag or use turn buttons. GPS still moves your position.',4000);};
-function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;[player.x,player.y]=boundedPosition(player.x,player.y);camera();drawMini();notice('Location off. Manual exploration within 120 m of the loaded area center.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
+function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;gps.prefetch=null;[player.x,player.y]=boundedPosition(player.x,player.y);camera();drawMini();notice('Location off. Manual exploration within 120 m of the loaded area center.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
 $('gps').onclick=toggleGps;$('gps-toggle').onclick=toggleGps;$('gps-cancel').onclick=()=>$('gps-dialog').close();
 $('gps-enable').onclick=()=>{$('gps-dialog').close();followCompass=true;stop();positioning.enable().then(ok=>{if(ok)notice('Waiting for your location…');});};
 $('road-cache-toggle').onclick=()=>{roadCacheEnabled=!roadCacheEnabled;try{localStorage.setItem('navigator-roads-enabled',String(roadCacheEnabled));}catch{}if(roadCacheEnabled)startRoadCache();else roadWorker?.postMessage({type:'pause'});showRoadCache();};
 $('road-cache-area').onclick=()=>{roadCacheEnabled=true;startRoadCache();sendRoadPosition(true);showRoadCache();};
 $('road-cache-clear').onclick=()=>{roadCacheEnabled=false;try{localStorage.setItem('navigator-roads-enabled','false');}catch{}if(!roadWorker)startRoadCache();roadWorker.postMessage({type:'clear'});showRoadCache();};
 $('menu').onclick=()=>{stop();$('guide').showModal();};$('close-guide').onclick=()=>$('guide').close();
-$('refresh').onclick=()=>request(area.live&&area.radius?{center:area.origin,radius:area.radius}:{live:true});
+$('refresh').onclick=()=>request(area.live&&area.radius?{center:area.origin,radius:area.radius,fresh:true}:{live:true});
 $('stats-toggle').onclick=()=>{const hidden=!$('stats').hidden;$('stats').hidden=hidden;$('stats-toggle').setAttribute('aria-expanded',String(!hidden));updateUI();};
 $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else notice('For a full-screen view on iPhone, use Share → Add to Home Screen.',6000);}catch{notice('Fullscreen is unavailable in this browser.',4000);}};
 addEventListener('offline',()=>roadWorker?.postMessage({type:'pause'}));addEventListener('online',()=>{if(roadCacheEnabled&&!roadHold)roadWorker?.postMessage({type:'resume'});});
@@ -215,4 +237,4 @@ let installPrompt;addEventListener('beforeinstallprompt',e=>{e.preventDefault();
 if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;$('offline-status').textContent='App and bundled area are ready offline. Live building areas last for this session; downloaded road packages stay on this device. iPhone: Share → Add to Home Screen.';}).catch(()=>{$('offline-status').textContent='Offline setup failed. Keep this tab online and reload to retry.';});}else $('offline-status').textContent='Offline caching is enabled in the production build.';
 applyMode();
 // Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype E.
-window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});
+window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend,failures:gps.failures,retryMs:gps.retryMs,retryInMs:gps.retryAt===-Infinity?null:Math.max(0,gps.retryAt-performance.now()),prefetch:gps.prefetch,prefetching:gps.prefetching,prefetches:gps.prefetches},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

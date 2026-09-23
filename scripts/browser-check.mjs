@@ -93,6 +93,10 @@ await drivePage.locator('#gps').click();await drivePage.locator('#gps-enable').c
 await drivePage.evaluate(h=>window.__fix({latitude:h.latitude,longitude:h.longitude,accuracy:4,speed:27,heading:0}),HOME);
 await drivePage.waitForFunction(()=>window.navigatorDiagnostics().sensors.fixes.accepted>=1,null,{timeout:10000});
 await drivePage.waitForFunction(()=>window.navigatorDiagnostics().roadCache.hold===true,null,{timeout:5000});assert.equal((await diag(drivePage)).roadCache.gpsPlanned,false);
+// At 27 m/s the 122 m of runway left in the bundled box is under eight seconds of travel, so the next square is prefetched
+// while the bundled area still covers the fix; the later edge swap must then reuse it instead of downloading at the edge.
+await drivePage.waitForFunction(()=>window.navigatorDiagnostics().gps.prefetch!==null,null,{timeout:10000});
+const prefetched=await diag(drivePage);assert.equal(prefetched.area.live,false,'prefetch happened while still in the bundled area');assert.equal(prefetched.gps.prefetch.radius,1000);assert.equal(driveRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length,1);
 // Per-frame probe in absolute metres north of HOME (independent of re-anchoring), plus the noisy compass.
 await drivePage.evaluate(lat=>{window.__probe=[];const M=111319.49;(function sample(){const d=window.navigatorDiagnostics();window.__probe.push([performance.now(),d.player.y+(d.area.origin[1]-lat)*M,d.player.heading]);requestAnimationFrame(sample);})();
  let t=0;window.__compass=setInterval(()=>{t+=.1;window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute',{alpha:360-(90+30*Math.sin(t)),beta:0,gamma:0,absolute:true}));},100);},HOME.latitude);
@@ -109,13 +113,32 @@ assert.equal(await drivePage.locator('#heading-source').innerText(),'GPS COURSE'
 let maxStep=0,backwards=0;for(let i=1;i<probe.length;i++){const step=probe[i][1]-probe[i-1][1];maxStep=Math.max(maxStep,step);if(step<-0.05)backwards++;}
 assert.ok(probe.length>DRIVE_S*10,`only ${probe.length} frames sampled`);assert.ok(maxStep<10,`max per-frame step ${maxStep} m`);assert.equal(backwards,0,`${backwards} backwards frames`);
 const travelled=probe[probe.length-1][1]-probe[0][1];assert.ok(travelled>27*DRIVE_S*.8&&travelled<27*DRIVE_S*1.1,`travelled ${travelled} m`);
-const driveOverpass=driveRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length;assert.ok(driveOverpass>=1&&driveOverpass<=5,`${driveOverpass} Overpass requests`);
+// 835 m at 60 mph: the prefetched 2 km square covers the whole drive, so exactly one download; the swap came from the session cache.
+const driveOverpass=driveRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length;assert.equal(driveOverpass,1,`${driveOverpass} Overpass requests`);
+assert.equal(drive.area.live,true);assert.equal(drive.area.cached,true);assert.equal(drive.area.radius,1000);assert.equal(drive.gps.failures,0);assert.ok(drive.gps.prefetches>=1);
 assert.ok(driveRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.deepEqual(driveErrors,[]);
 // The hold lasted the whole drive with no GPS-centred plan; the field guide's Cache this area tap releases it explicitly.
 assert.equal(drive.roadCache.hold,true);assert.equal(drive.roadCache.gpsPlanned,false);
 await drivePage.locator('#stats-toggle').click();await drivePage.screenshot({path:'test-results/drive.png'});
 await drivePage.locator('#menu').click();await drivePage.locator('#road-cache-area').click();
 const released=await diag(drivePage);assert.equal(released.roadCache.hold,false);assert.equal(released.roadCache.gpsPlanned,true);await driveContext.close();
+// Rate limited: Overpass answers 429 with Retry-After 45. The app must wait at least that long, escalate nothing else, and never
+// hit the OSM API as a second provider for a rate limit.
+const limitContext=await browser.newContext({viewport:{width:1440,height:900},geolocation:{...HOME,accuracy:8},permissions:['geolocation']});const limitRequests=[],limitErrors=[];
+// Retry-After is not CORS-safelisted; without Access-Control-Expose-Headers a cross-origin fetch cannot read it and the app uses 60 s.
+await limitContext.route('https://overpass-api.de/**',route=>route.fulfill({status:429,headers:{'retry-after':'45','access-control-allow-origin':'*','access-control-expose-headers':'retry-after'},body:'rate limited'}));
+await limitContext.route('https://api.openstreetmap.org/**',route=>route.fulfill({status:500,body:'must not be called'}));
+const limitPage=await limitContext.newPage();limitPage.on('pageerror',e=>limitErrors.push(e.message));limitPage.on('console',m=>{if(m.type()==='error')limitErrors.push(m.text());});limitPage.on('request',r=>limitRequests.push(r.url()));
+await limitPage.goto('http://127.0.0.1:4173/navigator/');await limitPage.waitForFunction(()=>window.navigatorDiagnostics?.().ready,null,{timeout:20000});
+await limitPage.locator('#gps').click();await limitPage.locator('#gps-enable').click();await limitPage.waitForFunction(()=>window.navigatorDiagnostics().sensors.fixes.accepted>=1,null,{timeout:10000});
+for(let i=4;i<=22;i+=2){await limitContext.setGeolocation({latitude:HOME.latitude+i*.0001,longitude:HOME.longitude,accuracy:8});await limitPage.waitForTimeout(650);}
+await limitPage.waitForFunction(()=>window.navigatorDiagnostics().gps.failures>=1,null,{timeout:20000});
+let limited=await diag(limitPage);assert.equal(limited.gps.failures,1);assert.equal(limited.gps.retryMs,45000);assert.ok(limited.gps.retryInMs>40000&&limited.gps.retryInMs<=45000,`retry in ${limited.gps.retryInMs}`);
+assert.ok((await limitPage.locator('#notice').innerText()).includes('next attempt in 45 s'));assert.equal(limited.area.live,false);assert.ok(limited.metrics.buildings>0,'the bundled scene stays usable');
+// Further fixes during the hold add no requests.
+for(let i=24;i<=28;i+=2){await limitContext.setGeolocation({latitude:HOME.latitude+i*.0001,longitude:HOME.longitude,accuracy:8});await limitPage.waitForTimeout(650);}
+assert.equal(limitRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length,1);assert.equal(limitRequests.filter(u=>u.startsWith('https://api.openstreetmap.org/')).length,0);assert.deepEqual(limitErrors,[]);
+await limitContext.close();
 const gps={firstFixMs,easeMs,final:await diag(gpsPage),drive:{frames:probe.length,maxStepM:maxStep,travelledM:travelled,overpassRequests:driveOverpass,heading:drive.player.heading,fixes:drive.sensors.fixes}};
 const results={errors,badResponses,requests,moving,offline,viewport:{width:390,height:844},overflow,gps};await fs.writeFile('test-results/browser-results.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));
 await browser.close();

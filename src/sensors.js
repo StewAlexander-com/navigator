@@ -13,7 +13,9 @@ export const SENSORS = Object.freeze({
   staleFixMs: 30000,      // fixes older than this restart the plausibility check
   recoverAfter: 3,        // consecutive implausible fixes before the old fix is deemed the outlier
   compassTimeoutMs: 4000, // wait this long for a first absolute heading event
-  reanchorRetryMs: 30000, // delay before another area download after a failure
+  reanchorRetryMs: 30000, // first delay before another area download after a failure; doubles per failure
+  reanchorRetryMaxMs: 300000, // cap on that delay; a server Retry-After longer than the delay wins
+  retryJitter: 0.2,       // ±fraction of jitter on the computed delay so clients do not retry in lockstep
   idleHeading: 0.05,      // degrees; smaller residual heading error is "settled"
   idlePosition: 0.01,     // metres; smaller residual position error is "settled"
   // Driving-speed rules. Every one of them reduces to the walking behaviour above below `movingSpeed`.
@@ -150,4 +152,30 @@ export function insideBBox([lng, lat], [south, west, north, east]) {
 export function areaCovers(x, y, bbox, origin, margin = LIMITS.radius) {
   const [minX, minY] = toLocal([bbox[1], bbox[0]], origin), [maxX, maxY] = toLocal([bbox[3], bbox[2]], origin);
   return x - margin >= minX && x + margin <= maxX && y - margin >= minY && y + margin <= maxY;
+}
+// Metres of travel left in any direction before `areaCovers` fails (negative once it already has).
+export function edgeRunway(x, y, bbox, origin, margin = LIMITS.radius) {
+  const [minX, minY] = toLocal([bbox[1], bbox[0]], origin), [maxX, maxY] = toLocal([bbox[3], bbox[2]], origin);
+  return Math.min(x - margin - minX, maxX - x - margin, y - margin - minY, maxY - y - margin);
+}
+// Prefetch the next square only above walking pace, when the runway is shorter than eight seconds of travel.
+export const shouldPrefetch = (runway, speed) => Number.isFinite(speed) && speed >= SENSORS.movingSpeed && runway < Math.max(LIMITS.prefetchMargin, speed * LIMITS.prefetchLeadS);
+
+// The live square for a fix: at walking pace the original 800 m square centred on the fix. Above `movingSpeed` the
+// half-size grows 30 m per m/s to a 1,000 m cap and the centre leads the fix by six seconds of travel along the course,
+// so most of the square lies ahead of a car instead of behind it.
+export function liveSquare([lng, lat], speed, course, lead = LIMITS.areaLeadS) {
+  const v = Number.isFinite(speed) && speed >= SENSORS.movingSpeed ? speed : 0;
+  const radius = Math.min(LIMITS.areaMax, LIMITS.area + (v ? (v - SENSORS.movingSpeed) * LIMITS.areaPerSpeed : 0));
+  if (!v || !Number.isFinite(course)) return {center: [lng, lat], radius};
+  const r = course * RAD, d = v * lead, M = 111319.49079327358;
+  return {center: [lng + Math.sin(r) * d / (M * Math.cos(lat * RAD)), lat + Math.cos(r) * d / M], radius};
+}
+
+// Delay before the next live-area attempt after `failures` consecutive failures: 30 s doubling to a 5 min cap with
+// ±20 % jitter, never shorter than a Retry-After the service asked for.
+export function retryDelay(failures, serverRetryMs = 0, random = Math.random) {
+  const base = Math.min(SENSORS.reanchorRetryMaxMs, SENSORS.reanchorRetryMs * 2 ** Math.max(0, failures - 1));
+  const jittered = base * (1 + (random() * 2 - 1) * SENSORS.retryJitter);
+  return Math.round(Math.max(jittered, Number.isFinite(serverRetryMs) ? serverRetryMs : 0));
 }

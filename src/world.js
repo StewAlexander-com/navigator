@@ -5,7 +5,10 @@ import {ShapeUtils, Vector2} from 'three';
 export const ORIGIN = [-118.2462058, 34.0510824];
 export const BBOX = [34.0477, -118.2490, 34.0538, -118.2417];
 // `area` is the half-size of a live GPS download square; `areaFallback` is retried once when a dense area exceeds the response cap.
-export const LIMITS = Object.freeze({radius: 180, movement: 120, area: 400, areaFallback: 250, vertices: 90000, buildings: 160, responseBytes: 8 * 1024 * 1024});
+// Above walking pace the half-size grows `areaPerSpeed` metres per m/s to `areaMax`, the centre leads the fix by `areaLeadS`
+// seconds of travel, the next square is prefetched `prefetchLeadS` seconds (at least `prefetchMargin` metres) before the edge,
+// and the worker keeps the last `squares` parsed squares (at most `squareBytes` of source responses) for the session.
+export const LIMITS = Object.freeze({radius: 180, movement: 120, area: 400, areaFallback: 250, areaMax: 1000, areaPerSpeed: 30, areaLeadS: 6, prefetchLeadS: 8, prefetchMargin: 100, squares: 8, squareBytes: 16 * 1024 * 1024, vertices: 90000, buildings: 160, responseBytes: 8 * 1024 * 1024});
 const M = 111319.49079327358;
 // Local metres are east/north of an origin; the origin is the bundled LA point unless a GPS area re-anchors it.
 export const toLocal = ([lng, lat], origin = ORIGIN) => [(lng - origin[0]) * M * Math.cos(origin[1] * Math.PI / 180), (lat - origin[1]) * M];

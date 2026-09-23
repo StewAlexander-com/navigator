@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {compassHeading,smoothHeading,smoothPosition,headingDelta,evaluateFix,travelCourse,areaAround,areaCovers,insideBBox,plausibleSpeed,snapDistanceFor,deadReckon,courseWeight,fuseHeading,SENSORS} from '../src/sensors.js';
+import {compassHeading,smoothHeading,smoothPosition,headingDelta,evaluateFix,travelCourse,areaAround,areaCovers,edgeRunway,shouldPrefetch,liveSquare,retryDelay,insideBBox,plausibleSpeed,snapDistanceFor,deadReckon,courseWeight,fuseHeading,SENSORS} from '../src/sensors.js';
 import {ORIGIN,BBOX,LIMITS,toLocal,toLngLat,parseWorld} from '../src/world.js';
 import fs from 'node:fs';
 const near=(a,b,tol=1e-6)=>assert.ok(Math.abs(headingDelta(a,b))<tol,`${a} vs ${b}`);
@@ -99,6 +99,29 @@ test('GPS areas are 800 m squares that re-anchor before the view radius leaves t
  assert.ok(areaCovers(0,0,bbox,ORIGIN));assert.ok(areaCovers(LIMITS.area-LIMITS.radius-1,0,bbox,ORIGIN));assert.ok(!areaCovers(LIMITS.area-LIMITS.radius+1,0,bbox,ORIGIN));
  assert.ok(areaCovers(0,0,BBOX,ORIGIN));assert.ok(!areaCovers(0,200,BBOX,ORIGIN));
  const small=areaAround(ORIGIN,LIMITS.areaFallback);assert.ok(small[2]<bbox[2]&&small[0]>bbox[0]);
+});
+test('live squares stay 800 m on the fix at walking pace and grow, capped and led along the course, at speed',()=>{
+ for(const [speed,course] of [[null,null],[0,90],[1.4,0],[2.9,45],[27,null]]){const s=liveSquare(ORIGIN,speed,course);assert.deepEqual(s.center,ORIGIN);assert.equal(s.radius,speed===27?LIMITS.areaMax:LIMITS.area);}
+ assert.equal(liveSquare(ORIGIN,3,0).radius,LIMITS.area);assert.equal(liveSquare(ORIGIN,13,0).radius,700);assert.equal(liveSquare(ORIGIN,23,0).radius,LIMITS.areaMax);
+ const north=liveSquare(ORIGIN,27,0),[nx,ny]=toLocal(north.center);assert.ok(Math.abs(nx)<1e-6&&Math.abs(ny-27*LIMITS.areaLeadS)<1e-6,`${nx},${ny}`);
+ const east=liveSquare(ORIGIN,10,90,8),[ex,ey]=toLocal(east.center);assert.ok(Math.abs(ex-80)<1e-6&&Math.abs(ey)<1e-6);
+ // The square ahead still covers the fix itself with the full view margin.
+ assert.ok(areaCovers(...toLocal(ORIGIN,north.center),areaAround(north.center,north.radius),north.center));
+});
+test('edge runway and prefetch trigger: only above walking pace, eight seconds before the view radius leaves the square',()=>{
+ const bbox=areaAround(ORIGIN);
+ assert.ok(Math.abs(edgeRunway(0,0,bbox,ORIGIN)-(LIMITS.area-LIMITS.radius))<.2);assert.ok(Math.abs(edgeRunway(0,100,bbox,ORIGIN)-(LIMITS.area-LIMITS.radius-100))<.2);assert.ok(edgeRunway(0,230,bbox,ORIGIN)<0);
+ assert.equal(shouldPrefetch(50,null),false);assert.equal(shouldPrefetch(50,1.4),false);assert.equal(shouldPrefetch(50,2.9),false);
+ assert.equal(shouldPrefetch(99,3),true);assert.equal(shouldPrefetch(101,3),false);assert.equal(shouldPrefetch(215,27),true);assert.equal(shouldPrefetch(217,27),false);
+ // A walker at the edge behaves as before: no prefetch, the ordinary swap at the edge.
+ assert.equal(shouldPrefetch(-5,1.4),false);
+});
+test('live-area retry delay doubles from 30 s to a 5 min cap with ±20 % jitter and never undercuts Retry-After',()=>{
+ const mid=()=>.5,low=()=>0,high=()=>1;
+ assert.equal(retryDelay(1,0,mid),30000);assert.equal(retryDelay(2,0,mid),60000);assert.equal(retryDelay(3,0,mid),120000);assert.equal(retryDelay(4,0,mid),240000);assert.equal(retryDelay(5,0,mid),300000);assert.equal(retryDelay(9,0,mid),300000);
+ assert.equal(retryDelay(1,0,low),24000);assert.equal(retryDelay(1,0,high),36000);assert.equal(retryDelay(0,0,mid),30000);
+ assert.equal(retryDelay(1,45000,low),45000);assert.equal(retryDelay(1,45000,high),45000);assert.equal(retryDelay(3,45000,mid),120000);assert.equal(retryDelay(1,NaN,mid),30000);
+ for(let i=0;i<50;i++){const d=retryDelay(1);assert.ok(d>=24000&&d<=36000);}
 });
 test('parsing with a moved origin shifts local geometry exactly',()=>{
  const raw=JSON.parse(fs.readFileSync(new URL('../public/osm-snapshot.json',import.meta.url)));

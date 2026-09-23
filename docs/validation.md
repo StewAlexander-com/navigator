@@ -128,3 +128,13 @@ Recorded 2026-09-23 in local headless Chromium on macOS. Motivation: a real 60 m
 - Existing manual, GPS-walk, denied-permission and offline checks passed unchanged; the walking context's Playwright fixes carry no speed and therefore exercise the pre-existing path (400 m square, one Overpass request, one inaccurate rejection).
 
 Limits: Playwright 1.62.1 drops `coords.speed`/`coords.heading`, so the drive uses a page-side `watchPosition` shim; a real receiver's speed and course noise, magnetometer disturbance in a car, and fix cadence on phones are not represented. These rules are inert without a reported speed.
+
+## v0.1.12 — road-cache churn at speed
+
+Recorded 2026-09-23 in local headless Chromium on macOS. Motivation: at 27 m/s the road worker's 25 m maintenance ran about once per second, each call gunzipping, SHA-256-hashing and re-parsing the in-range package (a real 3.16 MB Mebane tile measured about 67 ms per call in Node) and rewriting the plan record; enabling GPS in a moving car also started the 69-tile bulk plan at once.
+
+- `npm test`: 55 passed, 0 failed (53 before). New: a counting store shows one `get()` and one decode across five 30 m position updates in the same package, eviction of the decoded copy beyond the 300 m view range, one re-decode on return, removal clearing it, and a freshly downloaded package seeding the parsed map; the plan record is written once after installation and not again for position-only updates. The existing corrupt-payload test now corrupts the store and reloads a fresh engine, which is when verification happens.
+- `npm run test:browser`: passed. The 60 mph context now begins with a 27 m/s fix: the driving hold engaged before any GPS-centred road plan, stayed on for the 30 s drive, and the Cache this area tap released it and created the plan. Drive figures matched v0.1.11 (31/31 fixes, max per-frame step 1.60 m, three Overpass requests).
+- `npm run test:road-cache`: passed unchanged (installation, IndexedDB persistence, offline reload, second tab read-only, clear).
+
+Limits: the position-update spacing and the hold live in `main.js` and are exercised only through the browser drive; the post-change `view()` cost on the real tile was not re-measured. The hold applies only when GPS is enabled above 8 m/s before a GPS plan exists; a plan already running continues as before.

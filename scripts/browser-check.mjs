@@ -89,8 +89,10 @@ await driveContext.addInitScript(()=>{const watchers=new Map();let nextId=0;
 const drivePage=await driveContext.newPage();drivePage.on('pageerror',e=>driveErrors.push(e.message));drivePage.on('console',m=>{if(m.type()==='error')driveErrors.push(m.text());});drivePage.on('request',r=>driveRequests.push(r.url()));
 await drivePage.goto('http://127.0.0.1:4173/navigator/');await drivePage.waitForFunction(()=>window.navigatorDiagnostics?.().ready,null,{timeout:20000});
 await drivePage.locator('#gps').click();await drivePage.locator('#gps-enable').click();await drivePage.waitForTimeout(300);
-await drivePage.evaluate(h=>window.__fix({latitude:h.latitude,longitude:h.longitude,accuracy:4,speed:0,heading:null}),HOME);
+// GPS comes on already at speed: the 25-mile road plan must not start (driving hold) until a stop or an explicit tap.
+await drivePage.evaluate(h=>window.__fix({latitude:h.latitude,longitude:h.longitude,accuracy:4,speed:27,heading:0}),HOME);
 await drivePage.waitForFunction(()=>window.navigatorDiagnostics().sensors.fixes.accepted>=1,null,{timeout:10000});
+await drivePage.waitForFunction(()=>window.navigatorDiagnostics().roadCache.hold===true,null,{timeout:5000});assert.equal((await diag(drivePage)).roadCache.gpsPlanned,false);
 // Per-frame probe in absolute metres north of HOME (independent of re-anchoring), plus the noisy compass.
 await drivePage.evaluate(lat=>{window.__probe=[];const M=111319.49;(function sample(){const d=window.navigatorDiagnostics();window.__probe.push([performance.now(),d.player.y+(d.area.origin[1]-lat)*M,d.player.heading]);requestAnimationFrame(sample);})();
  let t=0;window.__compass=setInterval(()=>{t+=.1;window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute',{alpha:360-(90+30*Math.sin(t)),beta:0,gamma:0,absolute:true}));},100);},HOME.latitude);
@@ -109,7 +111,11 @@ assert.ok(probe.length>DRIVE_S*10,`only ${probe.length} frames sampled`);assert.
 const travelled=probe[probe.length-1][1]-probe[0][1];assert.ok(travelled>27*DRIVE_S*.8&&travelled<27*DRIVE_S*1.1,`travelled ${travelled} m`);
 const driveOverpass=driveRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length;assert.ok(driveOverpass>=1&&driveOverpass<=5,`${driveOverpass} Overpass requests`);
 assert.ok(driveRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.deepEqual(driveErrors,[]);
-await drivePage.locator('#stats-toggle').click();await drivePage.screenshot({path:'test-results/drive.png'});await driveContext.close();
+// The hold lasted the whole drive with no GPS-centred plan; the field guide's Cache this area tap releases it explicitly.
+assert.equal(drive.roadCache.hold,true);assert.equal(drive.roadCache.gpsPlanned,false);
+await drivePage.locator('#stats-toggle').click();await drivePage.screenshot({path:'test-results/drive.png'});
+await drivePage.locator('#menu').click();await drivePage.locator('#road-cache-area').click();
+const released=await diag(drivePage);assert.equal(released.roadCache.hold,false);assert.equal(released.roadCache.gpsPlanned,true);await driveContext.close();
 const gps={firstFixMs,easeMs,final:await diag(gpsPage),drive:{frames:probe.length,maxStepM:maxStep,travelledM:travelled,overpassRequests:driveOverpass,heading:drive.player.heading,fixes:drive.sensors.fixes}};
 const results={errors,badResponses,requests,moving,offline,viewport:{width:390,height:844},overflow,gps};await fs.writeFile('test-results/browser-results.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));
 await browser.close();

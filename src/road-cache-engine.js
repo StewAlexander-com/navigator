@@ -24,7 +24,10 @@ export async function fetchRoadPackage(t,signal){
  return {raw,bytes};
 }
 export class RoadCacheEngine{
- constructor({store,emit,download=fetchRoadPackage,now=()=>Date.now(),delay=ROAD_CACHE.minRequestMs,readOnly=false}){Object.assign(this,{store,emit,download,now,delay,readOnly});this.generation=0;this.paused=false;this.running=false;this.records=new Map();this.failed=new Map();this.retries=new Map();this.lastRequest=0;this.retired=new Set();this.message='';this.downloadedBytes=0;this.evicted=0;}
+ constructor({store,emit,download=fetchRoadPackage,now=()=>Date.now(),delay=ROAD_CACHE.minRequestMs,readOnly=false}){Object.assign(this,{store,emit,download,now,delay,readOnly});this.generation=0;this.paused=false;this.running=false;this.records=new Map();this.failed=new Map();this.retries=new Map();this.lastRequest=0;this.retired=new Set();this.message='';this.downloadedBytes=0;this.evicted=0;
+  // Decoded, hash-verified segments per in-range package. A package is gunzipped, hashed and parsed once per
+  // session, not on every 25 m position update; entries leave the map with their record or when out of range.
+  this.parsed=new Map();this.savedPlan=null;}
  async init(){this.records=new Map((await this.store.list()).map(m=>[m.id,m]));this.saved=await this.store.setting('plan');this.retryAt=this.saved?.retryAt||0;this.retries=new Map(this.saved?.retries||[]);this.failed=new Map(this.saved?.failed||[]);}
  setPosition(point,origin,mode,force=false){
  if(!point?.every(Number.isFinite)||!origin?.every(Number.isFinite))return;
@@ -35,15 +38,19 @@ export class RoadCacheEngine{
  }
  status(phase){const valid=this.tiles?.filter(t=>this.usable(this.records.get(t.id))).length||0;return {phase,message:this.message,total:this.tiles?.length||0,complete:valid,bytes:[...this.records.values()].reduce((n,r)=>n+r.bytes,0),packages:this.records.size,downloadedBytes:this.downloadedBytes,evicted:this.evicted,radiusMiles:25,refreshMiles:12.5,center:this.center,displacement:this.center&&this.point?distance(this.center,this.point):0,failed:this.failed.size,activeSegments:this.activeCount||0,paused:this.paused};}
  usable(r){return r&&this.now()-r.fetchedAt<ROAD_CACHE.maxAgeMs&&(r.full||r.planKey===JSON.stringify(this.center));}
- async save(){await this.store.save({id:'plan',center:this.center,mode:this.mode,tiles:this.tiles,retired:[...this.retired],retryAt:this.retryAt||0,retries:[...this.retries],failed:[...this.failed]});}
- async remove(id,retire=false){await this.store.remove(id);this.records.delete(id);if(retire)this.retired.add(id);this.evicted++;}
+ // The plan record only reaches IndexedDB when it differs from the last one written; position updates alone do not write.
+ async save(){const plan={id:'plan',center:this.center,mode:this.mode,tiles:this.tiles,retired:[...this.retired],retryAt:this.retryAt||0,retries:[...this.retries],failed:[...this.failed]},json=JSON.stringify(plan);if(json===this.savedPlan)return;await this.store.save(plan);this.savedPlan=json;}
+ async remove(id,retire=false){await this.store.remove(id);this.records.delete(id);this.parsed.delete(id);if(retire)this.retired.add(id);this.evicted++;}
  async purge(){for(const r of [...this.records.values()]){if(boxDistance(r.bbox,this.point)>ROAD_CACHE.radius||(r.bounds&&JSON.stringify(r.center)!==JSON.stringify(this.point)&&!inside(r.bounds,this.point))){await this.remove(r.id,true);}}}
  async cleanupSuperseded(){for(const r of [...this.records.values()]){const pieces=this.tiles.filter(t=>descendant(t,r));if(pieces.length&&pieces.every(t=>this.usable(this.records.get(t.id))))await this.remove(r.id);}}
  async view(){
   const origin=[...this.origin],point=[...this.point],roads=[];
   const parents=[...this.records.values()].filter(r=>this.tiles.some(t=>descendant(t,r)));
-  for(const r of [...this.records.values()].filter(r=>!parents.some(p=>descendant(r,p))&&boxDistance(r.bbox,point)<=ROAD_CACHE.viewRadius).sort((a,b)=>boxDistance(a.bbox,point)-boxDistance(b.bbox,point))){
-   let parsed;try{const payload=await this.store.get(r.id),json=await decodePayload(payload);if(await digest(json)!==r.hash)throw new Error('Road integrity mismatch.');parsed=JSON.parse(json);}catch{if(!this.readOnly)await this.remove(r.id);continue;}
+  const inRange=[...this.records.values()].filter(r=>!parents.some(p=>descendant(r,p))&&boxDistance(r.bbox,point)<=ROAD_CACHE.viewRadius).sort((a,b)=>boxDistance(a.bbox,point)-boxDistance(b.bbox,point));
+  for(const id of [...this.parsed.keys()])if(!inRange.some(r=>r.id===id))this.parsed.delete(id);
+  for(const r of inRange){
+   let parsed=this.parsed.get(r.id);
+   if(!parsed){try{const payload=await this.store.get(r.id),json=await decodePayload(payload);if(await digest(json)!==r.hash)throw new Error('Road integrity mismatch.');parsed=JSON.parse(json);this.parsed.set(r.id,parsed);}catch{if(!this.readOnly)await this.remove(r.id);continue;}}
    roads.push(...activeRoads(parsed,point,origin));roads.sort((a,b)=>a.viewDistance-b.viewDistance);roads.length=Math.min(roads.length,ROAD_CACHE.activeSegments);
   }
   if(JSON.stringify(origin)===JSON.stringify(this.origin)&&JSON.stringify(point)===JSON.stringify(this.point)){this.activeCount=roads.length;const signature=JSON.stringify({origin,roads});if(signature!==this.viewSignature){this.viewSignature=signature;this.emit({type:'roads',origin,roads});}}
@@ -73,7 +80,7 @@ export class RoadCacheEngine{
     const total=[...this.records.values()].reduce((n,r)=>n+r.bytes,0)-(this.records.get(t.id)?.bytes||0)+size;
     if(total>ROAD_CACHE.diskBytes){this.message='128 MiB local road budget reached; coverage is incomplete.';this.pause();return;}
     const meta={...t,bounds,center:[...this.point],planKey:JSON.stringify(this.center),full:inside(t.bbox,this.point,ROAD_CACHE.radius*.99),hash,bytes:size,fetchedAt:this.now()};
-    await this.store.put(meta,payload);this.records.set(t.id,meta);this.retries.delete(t.id);this.message='';await this.cleanupSuperseded();await this.view();this.emit({type:'status',...this.status('downloading')});
+    await this.store.put(meta,payload);this.records.set(t.id,meta);this.parsed.set(t.id,roads);this.retries.delete(t.id);this.message='';await this.cleanupSuperseded();await this.view();this.emit({type:'status',...this.status('downloading')});
    }catch(error){
     if(this.paused||generation!==this.generation)return;
     this.message=error.message;

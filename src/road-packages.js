@@ -1,5 +1,6 @@
 // Roads-only OSM package geometry and coverage planning. Distances are metres.
-export const ROAD_CACHE=Object.freeze({radius:40233.6,refreshDistance:20116.8,step:.1,maxLevel:3,responseBytes:4*1024*1024,diskBytes:128*1024*1024,activeSegments:2400,viewRadius:300,minRequestMs:5000,maxAgeMs:7*86400000});
+// `driveSpeed`/`holdReleaseMs`: GPS enabled above 8 m/s defers the bulk plan until a minute of standstill or an explicit tap.
+export const ROAD_CACHE=Object.freeze({radius:40233.6,refreshDistance:20116.8,step:.1,maxLevel:3,responseBytes:4*1024*1024,diskBytes:128*1024*1024,activeSegments:2400,viewRadius:300,minRequestMs:5000,maxAgeMs:7*86400000,driveSpeed:8,holdReleaseMs:60000});
 const R=6371008.8,D=Math.PI/180;
 export const wrap=x=>((x+180)%360+360)%360-180;
 export function distance(a,b){const p=a[1]*D,q=b[1]*D,dl=wrap(b[0]-a[0])*D,dp=q-p;return 2*R*Math.asin(Math.min(1,Math.sqrt(Math.sin(dp/2)**2+Math.cos(p)*Math.cos(q)*Math.sin(dl/2)**2)));}

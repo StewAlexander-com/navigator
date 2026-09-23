@@ -7,7 +7,7 @@ import {createSunCheck} from './sun-check.js';
 import {smoothHeading, smoothPosition, headingDelta, areaCovers, deadReckon, snapDistanceFor, courseWeight, fuseHeading, SENSORS} from './sensors.js';
 import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition} from './world.js';
 import {nearestStreet} from './street-label.js';
-import {distance as roadDistance} from './road-packages.js';
+import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import './style.css';
 
 const $=id=>document.getElementById(id);
@@ -22,18 +22,30 @@ let followCompass=true;
 let street=null,labelPosition=null,labelRoads=null;
 let roadWorker=null,cacheRoads=null,baseRoads=[],lastRoadPoint=null,roadCacheState={phase:'starting',complete:0,total:0,bytes:0};
 let roadCacheEnabled=true;try{roadCacheEnabled=localStorage.getItem('navigator-roads-enabled')!=='false';}catch{}
+// Driving hold: when GPS comes on above ROAD_CACHE.driveSpeed before any GPS-centred plan exists, the 25-mile bulk
+// download (69 tiles, minutes of "downloading") is not started. It resumes after a sustained stop or an explicit tap.
+let roadHold=false,roadGpsPlanned=false,roadSlowSince=null;
 function showRoadCache(){
- const r=roadCacheState,summary=roadCacheEnabled?`Roads · ${r.complete||0}/${r.total||0} areas · ${((r.bytes||0)/1048576).toFixed(1)} MiB · ${r.phase}`:'Road downloads paused';
- $('road-cache-status').textContent=summary;$('road-cache-detail').textContent=`${summary}. ${r.message||'25-mile target; downloads and coverage may be incomplete. Roads are stored on this device.'}`;
+ const r=roadCacheState,summary=!roadCacheEnabled?'Road downloads paused':roadHold?'Roads · paused while driving · tap Cache this area':`Roads · ${r.complete||0}/${r.total||0} areas · ${((r.bytes||0)/1048576).toFixed(1)} MiB · ${r.phase}`;
+ $('road-cache-status').textContent=summary;$('road-cache-detail').textContent=`${summary}. ${roadHold&&roadCacheEnabled?'The 25-mile road download waits while you are driving. Tap Cache this area / retry to start it now; it starts by itself after you have been stopped for a minute.':r.message||'25-mile target; downloads and coverage may be incomplete. Roads are stored on this device.'}`;
  $('road-cache-toggle').textContent=roadCacheEnabled?'Pause road downloads':'Resume road downloads';
 }
 function useRoads(){roads=cacheRoads?.length?cacheRoads:baseRoads;if(worldLayer&&ready)worldLayer.setRoads(roads);labelRoads=null;}
 function sendRoadPosition(force=false){
- if(!roadWorker||!ready)return;const point=positioning.state.mode==='gps'&&positioning.state.lastFix?[positioning.state.lastFix.lng,positioning.state.lastFix.lat]:toLngLat(player.x,player.y,area.origin);
- if(!force&&lastRoadPoint&&roadDistance(lastRoadPoint,point)<25)return;
- lastRoadPoint=point;roadWorker.postMessage({type:'position',point,origin:area.origin,mode:positioning.state.mode==='gps'||area.live?'gps':'demo',force});
+ if(!roadWorker||!ready)return;const live=positioning.state.mode==='gps'&&!!positioning.state.lastFix,point=live?[positioning.state.lastFix.lng,positioning.state.lastFix.lat]:toLngLat(player.x,player.y,area.origin);
+ if(live&&!force&&!roadGpsPlanned){
+  const speed=gps.speed??0;if(speed<SENSORS.movingSpeed){roadSlowSince??=performance.now();}else roadSlowSince=null;
+  if(!roadHold&&speed>=ROAD_CACHE.driveSpeed){roadHold=true;roadWorker.postMessage({type:'pause'});showRoadCache();return;}
+  if(roadHold){if(roadSlowSince===null||performance.now()-roadSlowSince<ROAD_CACHE.holdReleaseMs)return;roadHold=false;if(roadCacheEnabled)roadWorker.postMessage({type:'resume'});showRoadCache();force=true;}
+ }
+ // At speed a position update every 25 m would run worker maintenance about once a second; space them by ~4 s of travel instead.
+ const threshold=gps.speed>=5?Math.max(25,gps.speed*4):25;
+ if(!force&&lastRoadPoint&&roadDistance(lastRoadPoint,point)<threshold)return;
+ const mode=positioning.state.mode==='gps'||area.live?'gps':'demo';if(mode==='gps'&&live)roadGpsPlanned=true;
+ lastRoadPoint=point;roadWorker.postMessage({type:'position',point,origin:area.origin,mode,force});
 }
 function startRoadCache(){
+ roadHold=false;
  if(roadWorker&&roadCacheState.phase==='shared cache'){roadWorker.terminate();roadWorker=null;}
  if(roadWorker){roadWorker.postMessage({type:'resume'});sendRoadPosition(true);return;}
  roadWorker=new Worker(new URL('./roads.worker.js',import.meta.url),{type:'module'});
@@ -173,7 +185,7 @@ function start(){if(!frameId&&ready){lastTime=performance.now();frameId=requestA
 function stop(){if(drag){const id=drag.id;drag=null;if($('map').hasPointerCapture(id))$('map').releasePointerCapture(id);}keys.clear();if(frameId)cancelAnimationFrame(frameId);frameId=0;document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));metrics.fps=null;}
 const supported=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','ArrowUp','ArrowDown']);
 addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);addEventListener('focus',start);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();positioning.pause();roadWorker?.postMessage({type:'pause'});}else{positioning.resume();if(roadCacheEnabled)roadWorker?.postMessage({type:'resume'});start();}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();positioning.pause();roadWorker?.postMessage({type:'pause'});}else{positioning.resume();if(roadCacheEnabled&&!roadHold)roadWorker?.postMessage({type:'resume'});start();}});
 for(const button of document.querySelectorAll('[data-key]')){button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keys.add(button.dataset.key);button.classList.add('active');start();});button.addEventListener('lostpointercapture',()=>{keys.delete(button.dataset.key);button.classList.remove('active');});}
 // A compass-follow drag temporarily owns the view; release eases back to the latest sensor heading.
 $('map').addEventListener('pointerdown',e=>{if(!ready||drag||e.button!==0||!e.isPrimary)return;drag={x:e.clientX,y:e.clientY,id:e.pointerId};$('map').setPointerCapture(e.pointerId);applyMode();});
@@ -198,9 +210,9 @@ $('menu').onclick=()=>{stop();$('guide').showModal();};$('close-guide').onclick=
 $('refresh').onclick=()=>request(area.live&&area.radius?{center:area.origin,radius:area.radius}:{live:true});
 $('stats-toggle').onclick=()=>{const hidden=!$('stats').hidden;$('stats').hidden=hidden;$('stats-toggle').setAttribute('aria-expanded',String(!hidden));updateUI();};
 $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else notice('For a full-screen view on iPhone, use Share → Add to Home Screen.',6000);}catch{notice('Fullscreen is unavailable in this browser.',4000);}};
-addEventListener('offline',()=>roadWorker?.postMessage({type:'pause'}));addEventListener('online',()=>{if(roadCacheEnabled)roadWorker?.postMessage({type:'resume'});});
+addEventListener('offline',()=>roadWorker?.postMessage({type:'pause'}));addEventListener('online',()=>{if(roadCacheEnabled&&!roadHold)roadWorker?.postMessage({type:'resume'});});
 let installPrompt;addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('install').hidden=false;});$('install').onclick=async()=>{await installPrompt?.prompt();installPrompt=null;$('install').hidden=true;};
 if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;$('offline-status').textContent='App and bundled area are ready offline. Live building areas last for this session; downloaded road packages stay on this device. iPhone: Share → Add to Home Screen.';}).catch(()=>{$('offline-status').textContent='Offline setup failed. Keep this tab online and reload to retry.';});}else $('offline-status').textContent='Offline caching is enabled in the production build.';
 applyMode();
 // Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype E.
-window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});
+window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

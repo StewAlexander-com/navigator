@@ -20,7 +20,8 @@ test('packages retain road names, reject partial results, clip external geometry
 test('completed areas resume without another request and corrupted stored payloads are rejected',async()=>{
  const {e,store}=await engine();await e.run();assert.equal(store.meta.size,1);assert.ok(store.payload.size);assert.equal(e.status().complete,1);
  let calls=0;const next=await engine(store,async()=>{calls++;return {raw,bytes:250};});await next.e.run();assert.equal(calls,0);
- store.payload.set(t.id,{id:t.id,json:'corrupt'});await next.e.view();assert.equal(store.meta.size,0);assert.equal(store.payload.size,0);
+ // Packages are verified when first decoded in a session; a payload corrupted on disk is rejected at the next load.
+ store.payload.set(t.id,{id:t.id,json:'corrupt'});const reloaded=await engine(store,async()=>{calls++;return {raw,bytes:250};});await reloaded.e.view();assert.equal(store.meta.size,0);assert.equal(store.payload.size,0);assert.equal(calls,0);
 });
 test('halfway recentering cancels stale data and eviction deletes disk and memory records',async()=>{
  const {e,store}=await engine();await e.run();const old=[...e.center];e.setPosition([.15,.05],center,'demo');assert.deepEqual(e.center,old);e.setPosition([.3,.05],center,'demo');assert.notDeepEqual(e.center,old);
@@ -63,6 +64,29 @@ test('oversized network bodies are cancelled before parsing',async()=>{
  try{await assert.rejects(()=>fetchRoadPackage(t,new AbortController().signal),e=>e.split);assert.equal(cancelled,true);}finally{globalThis.fetch=original;}
 });
 
+test('an installed package is decoded and hash-verified once per session, not on every position update',async()=>{
+ class Counting extends Store{gets=0;saves=0;async get(id){this.gets++;return super.get(id);}async save(v){this.saves++;return super.save(v);}}
+ const store=new Counting();const first=await engine(store);await first.e.run();assert.equal(store.meta.size,1);
+ // Fresh engine over the same store (a reload): the first view decodes, later views 30 m apart reuse the parsed segments.
+ const {e}=await engine(store,async()=>{throw new Error('no download expected');});store.gets=0;
+ await e.view();assert.equal(store.gets,1);assert.equal(e.parsed.size,1);
+ const degrees=m=>m/(6371008.8*Math.PI/180);
+ for(let i=1;i<=5;i++){e.setPosition([center[0],center[1]+degrees(30*i)],center,'demo');await e.view();}
+ assert.equal(store.gets,1);assert.equal(e.parsed.size,1);assert.equal(e.activeCount,1);
+ // Leaving the 300 m view range drops the decoded copy; coming back decodes once more. Removal drops it too.
+ e.point=[2,2];await e.view();assert.equal(e.parsed.size,0);e.point=[...center];await e.view();assert.equal(store.gets,2);
+ await e.remove(t.id);assert.equal(e.parsed.size,0);
+ // A freshly downloaded package seeds the parsed map, so the view that follows its installation does not re-read the store.
+ const again=await engine(new Counting());await again.e.run();assert.equal(again.store.gets,0);assert.equal(again.e.parsed.size,1);
+});
+test('the plan record is written only when it changes, so position updates alone cause no storage writes',async()=>{
+ class Counting extends Store{saves=0;async save(v){this.saves++;return super.save(v);}}
+ const store=new Counting();const {e}=await engine(store);await e.run();const afterInstall=store.saves;assert.ok(afterInstall>=1);
+ const degrees=m=>m/(6371008.8*Math.PI/180);
+ for(let i=1;i<=5;i++){e.setPosition([center[0],center[1]+degrees(30*i)],center,'demo');await e.run();}
+ assert.equal(store.saves,afterInstall);
+ e.retired.add('x');await e.save();assert.equal(store.saves,afterInstall+1);await e.save();assert.equal(store.saves,afterInstall+1);
+});
 test('replanning preserves adaptive subdivisions so completed overlap is reused',async()=>{
  const {children,refinePlan}=await import('../src/road-packages.js');const pieces=children(t),refined=refinePlan([t],pieces,center);assert.deepEqual(refined.map(x=>x.id),pieces.map(x=>x.id));
  const {e}=await engine();e.tiles=pieces;e.setPosition(center,center,'demo',true);assert.ok(e.tiles.some(x=>x.id===pieces[0].id));assert.ok(!e.tiles.some(x=>x.id===t.id));

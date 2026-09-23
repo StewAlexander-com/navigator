@@ -95,6 +95,6 @@ self.onmessage = async ({data}) => {
     }
     if(!world)throw new Error('Load an area first.');
     const result=stream.update(data.x||0,data.y||0,data.heading||0),g=result.geometry;
-    self.postMessage({type:'ready',id:data.id,x:data.x||0,y:data.y||0,heading:data.heading||0,...result,areaLoaded:data.type==='load',origin:world.origin,bbox:world.bbox,radius:world.radius,timestamp:world.timestamp,bytes,provider,cached,ms:performance.now()-start,live:data.live||!!data.center},g?[g.position.buffer,g.normal.buffer,g.uv.buffer,g.style.buffer]:[]);
+    self.postMessage({type:'ready',id:data.id,x:data.x||0,y:data.y||0,heading:data.heading||0,...result,areaLoaded:data.type==='load',origin:world.origin,bbox:world.bbox,radius:world.radius,timestamp:world.timestamp,kinds:world.kinds,prior:world.prior,bytes,provider,cached,ms:performance.now()-start,live:data.live||!!data.center},g?[g.position.buffer,g.normal.buffer,g.uv.buffer,g.style.buffer]:[]);
   }catch(error){self.postMessage({type:'error',id:data.id,message:error.message,oversized:!!error.oversized,retryMs:error.retryMs||null});}
 };

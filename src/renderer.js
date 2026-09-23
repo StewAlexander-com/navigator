@@ -26,21 +26,33 @@ void main(){
   float stoneHighlight=pow(max(dot(n,normalize(sun+view)),0.),20.)*light;
   color+=vec3(.16,.14,.10)*stoneHighlight;
   color*=mix(.72,1.,smoothstep(0.,5.,local.z));
+  // Low three bits: style kind. 8: street-facing shopfront edge. 16: a home's street-facing door edge.
+  float type=mod(buildingStyle.x,8.);
+  float flag=floor(buildingStyle.x/8.+.001);
+  // Homes get a darker roof (flat or gabled) so the roofline reads against pale walls.
+  if(abs(n.z)>=.5&&type>.5&&type<1.5)color*=vec3(.60,.55,.52);
   if(abs(n.z)<.5){
-   float type=mod(buildingStyle.x,8.);
    float floorH=max(2.4,buildingStyle.y*.1);
    float bay=type<.5?4.8:type<1.5?3.8:type<2.5?3.2:type<3.5?4.2:type<4.5?2.8:type<5.5?6.:4.5;
    vec2 cell=fract(facade/vec2(bay,floorH));
    float window=step(.19,cell.x)*step(cell.x,.73)*step(.22,cell.y)*step(cell.y,.79)*step(1.,local.z);
    // Residential windows have more solid wall; offices alone get broad repeated glazing.
    if(type<.5)window*=step(.38,cell.y);
+   else if(type<1.5)window=step(.32,cell.x)*step(cell.x,.62)*step(.34,cell.y)*step(cell.y,.74)*step(.7,local.z);
    else if(type<2.5)window=step(.30,cell.x)*step(cell.x,.66)*step(.30,cell.y)*step(cell.y,.75)*step(.7,local.z);
    else if(type>4.5&&type<5.5)window=0.;
    else if(type>5.5)window=step(.37,cell.x)*step(cell.x,.63)*step(.18,cell.y)*step(cell.y,.84)*step(.9,local.z);
    float frame=step(.15,cell.x)*step(cell.x,.77)*step(.18,cell.y)*step(cell.y,.83)*step(1.,local.z);
    frame=type>3.5&&type<4.5?frame:window;
    if(type>4.5&&type<5.5)color*=.92+.08*smoothstep(.02,.08,fract(facade.x/1.6));
+   // Home walls: faint horizontal siding lines; a front door in the first bay of the street-facing edge replaces its window.
+   float door=0.;
+   if(type>.5&&type<1.5){
+    color*=1.-.05*step(.5,fract(local.z/.3));
+    if(flag>1.5){door=step(.32,cell.x)*step(cell.x,.62)*step(facade.x,bay)*step(local.z,2.1);window*=1.-door;frame*=1.-door;}
+   }
    color=mix(color,vec3(.92,.93,.94)*illumination,frame);
+   color=mix(color,vec3(.30,.22,.16)*illumination,door);
    // An analytic sky/ground environment creates angle-dependent glass, not scene reflections.
    vec3 reflected=reflect(-view,n);
    float sky=smoothstep(-.12,.65,reflected.z);
@@ -51,9 +63,11 @@ void main(){
    glass+=vec3(.85,.70,.45)*glint;
    // Recessed top edge gives each pane depth without geometry or shadow sampling.
    glass*=mix(.76,1.,smoothstep(.22,.34,cell.y));
-   if(type>0.5&&type<2.5)glass=mix(glass,vec3(.49,.52,.51),.30);
+   if(type>1.5&&type<2.5)glass=mix(glass,vec3(.49,.52,.51),.30);
+   // Home panes: no sky tint or glint; a flat dark pane reads domestic rather than curtain-wall.
+   else if(type>0.5&&type<1.5)glass=mix(glass,vec3(.34,.37,.36),.75);
    // Tagged retail/mixed use gets a ground-floor display and a shallow painted fascia.
-   if(buildingStyle.x>7.5&&local.z<floorH){
+   if(flag>.5&&flag<1.5&&local.z<floorH){
     window=step(.12,cell.x)*step(cell.x,.87)*step(.18,local.z)*step(local.z,floorH*.77);
     float fascia=step(floorH*.79,local.z)*step(local.z,floorH*.94);
     color=mix(color,vec3(.22,.34,.35)*illumination,fascia);

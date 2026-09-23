@@ -7,7 +7,11 @@ const civic=new Set(['civic','public','government','school','university','hospit
 const civicUses=new Set(['school','university','college','hospital','courthouse','townhall','police','fire_station','library','place_of_worship']);
 const shops=new Set(['restaurant','cafe','fast_food','pub','bar','bank','pharmacy']);
 const present=v=>!!v&&!['no','vacant','disused'].includes(v);
-export function buildingStyle(tags,{landuse=null,height=12,area=0}={}){
+// Road classes that mark a residential street when no land-use polygon exists (small-town US OSM often has none).
+export const residentialRoads=new Set(['residential','service','unclassified','living_street']);
+// `heightDefault`: the height is a documented default, not a tag; `nearRoad`: class of the nearest non-footway road within
+// 60 m when there is no land-use polygon; `prior`: most generic footprints in this square are small (see parseWorld).
+export function buildingStyle(tags,{landuse=null,height=12,area=0,heightDefault=false,nearRoad=null,prior=false}={}){
  const b=String(tags.building||'yes').toLowerCase(),uses=String(tags['building:use']||'').toLowerCase().split(';');
  const shop=present(tags.shop)||shops.has(tags.amenity)||uses.includes('retail');
  let kind=0,evidence='unknown';
@@ -32,20 +36,37 @@ export function buildingStyle(tags,{landuse=null,height=12,area=0}={}){
   if(landuse==='residential')kind=height<=10&&area<=250?1:2;
   else if(landuse==='retail')kind=3;
   else if(landuse==='industrial')kind=5;
-  if(kind)evidence='landuse inference';
+  if(kind)evidence=kind===1&&heightDefault?'footprint inference':'landuse inference';
  }
+ // No land-use polygon: a small generic footprint with no height evidence and no commercial cue, on a residential or
+ // service street, in a square that is mostly small footprints, is a home by footprint. Anything else stays neutral.
+ if(!kind&&['yes','building'].includes(b)&&!landuse&&prior&&heightDefault&&residentialRoads.has(nearRoad)&&area<=250&&!shop&&!present(tags.office)&&!tags.amenity){kind=1;evidence='footprint inference';}
  const levels=Number(tags['building:levels']);
- const floorHeight=Number.isFinite(levels)&&levels>0?Math.max(2.4,Math.min(6,height/levels)):3.2;
+ // Homes without a level count get 2.9 m floors; every other untagged style keeps 3.2 m.
+ const floorHeight=Number.isFinite(levels)&&levels>0?Math.max(2.4,Math.min(6,height/levels)):kind===1?2.9:3.2;
  return {kind,evidence,storefront:kind===3||(shop&&[0,1,2,4].includes(kind)),floorHeight};
+}
+// Class of the nearest road (not footway/steps/path/cycleway) whose segment passes within `reach` of the footprint bounds.
+// 60 m rather than the 35 m shopfront search: houses sit further back from the centreline than shopfronts do.
+export function nearestRoadClass(bounds,roads,reach=60){
+ const cx=(bounds[0]+bounds[2])/2,cy=(bounds[1]+bounds[3])/2;let best=reach*reach,kind=null,seen=0;
+ for(const r of roads){if(['footway','steps','path','cycleway'].includes(r.highway))continue;
+  for(let j=1;j<r.points.length;j++){const c=r.points[j-1],d=r.points[j];
+   if(Math.max(c[0],d[0])<bounds[0]-reach||Math.min(c[0],d[0])>bounds[2]+reach||Math.max(c[1],d[1])<bounds[1]-reach||Math.min(c[1],d[1])>bounds[3]+reach)continue;
+   const dx=d[0]-c[0],dy=d[1]-c[1],n=dx*dx+dy*dy,t=n?Math.max(0,Math.min(1,((cx-c[0])*dx+(cy-c[1])*dy)/n)):0,q=(cx-c[0]-t*dx)**2+(cy-c[1]-t*dy)**2;
+   if(q<best){best=q;kind=r.highway;}if(++seen>=256)return kind;
+  }
+ }
+ return kind;
 }
 export function containsPoint(rings,p){
  function ring(r){let yes=false;for(let i=0,j=r.length-1;i<r.length;j=i++){const a=r[i],b=r[j];if((a[1]>p[1])!==(b[1]>p[1])&&p[0]<(b[0]-a[0])*(p[1]-a[1])/(b[1]-a[1])+a[0])yes=!yes;}return yes;}
  return ring(rings[0])&&!rings.slice(1).some(ring);
 }
 export function contextLanduse(zones,bounds){const point=[(bounds[0]+bounds[2])/2,(bounds[1]+bounds[3])/2];return zones.find(z=>containsPoint(z.rings,point))?.use||null;}
-// At most one street-facing edge; no storefronts on every courtyard/back wall.
+// At most one street-facing edge; no storefronts on every courtyard/back wall. Homes use the same edge for a front door.
 export function storefrontEdge(building,roads){
- if(!building.style?.storefront||building.rings[0].length>128)return -1;
+ if(!(building.style?.storefront||building.style?.kind===1)||building.rings[0].length>128)return -1;
  const ring=building.rings[0],bounds=building.bounds,candidates=[];
  for(const r of roads){if(['footway','steps','path','cycleway'].includes(r.highway))continue;
   for(let j=1;j<r.points.length;j++){const c=r.points[j-1],d=r.points[j];

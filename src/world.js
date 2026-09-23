@@ -1,4 +1,4 @@
-import {buildingStyle,contextLanduse,storefrontEdge} from './building-style.js';
+import {buildingStyle,contextLanduse,storefrontEdge,nearestRoadClass,residentialRoads,BUILDING_STYLES} from './building-style.js';
 import osmtogeojson from 'osmtogeojson';
 import {ShapeUtils, Vector2} from 'three';
 
@@ -13,13 +13,19 @@ const M = 111319.49079327358;
 // Local metres are east/north of an origin; the origin is the bundled LA point unless a GPS area re-anchors it.
 export const toLocal = ([lng, lat], origin = ORIGIN) => [(lng - origin[0]) * M * Math.cos(origin[1] * Math.PI / 180), (lat - origin[1]) * M];
 export const toLngLat = (x, y, origin = ORIGIN) => [origin[0] + x / (M * Math.cos(origin[1] * Math.PI / 180)), origin[1] + y / M];
-export function height(tags) {
+// True when OSM carries a usable height or level count; otherwise `height()` returns a documented default.
+export const hasHeightTag = tags => Number.isFinite(parseFloat(String(tags.height || ''))) || Number.isFinite(parseFloat(tags['building:levels']));
+// Deterministic defaults by building type. A bare `building=yes` is 12 m unless it is a small footprint (≤ 250 m²) in
+// residential context, where two storeys (6.5 m) is the honest guess; house-like types and outbuildings have their own.
+export function height(tags, {residential = false, area = Infinity} = {}) {
   const raw = String(tags.height || '');
   const explicit = parseFloat(raw) * (/ft|feet|'/.test(raw) ? 0.3048 : 1);
   const levels = parseFloat(tags['building:levels']);
-  const fallback = {house: 7, residential: 12, apartments: 18, commercial: 24, industrial: 9, office: 30};
-  return Math.min(180, Math.max(3, Number.isFinite(explicit) ? explicit : Number.isFinite(levels) ? levels * 3.2 : fallback[tags.building] || 12));
+  const fallback = {house: 7, detached: 7, semidetached_house: 7, terrace: 7, bungalow: 4, cabin: 4, garage: 3, garages: 3, shed: 3, residential: 12, apartments: 18, commercial: 24, industrial: 9, office: 30};
+  const small = residential && area <= 250 && ['yes', 'building', undefined].includes(tags.building) ? 6.5 : null;
+  return Math.min(180, Math.max(3, Number.isFinite(explicit) ? explicit : Number.isFinite(levels) ? levels * 3.2 : fallback[tags.building] || small || 12));
 }
+const ringArea = points => Math.abs(points.reduce((sum, a, i) => {const b = points[(i + 1) % points.length]; return sum + a[0] * b[1] - b[0] * a[1];}, 0)) / 2;
 export function boundedPosition(x, y) {
   const length = Math.hypot(x, y);
   return length > LIMITS.movement ? [x * LIMITS.movement / length, y * LIMITS.movement / length] : [x, y];
@@ -37,6 +43,15 @@ export function parseWorld(raw, origin = ORIGIN) {
   const zoneArea=z=>Math.abs(z.rings[0].reduce((sum,a,i,r)=>{const b=r[(i+1)%r.length];return sum+a[0]*b[1]-b[0]*a[1];},0));zones.sort((a,b)=>zoneArea(a)-zoneArea(b));
   const local = p => toLocal(p, origin);
   for (const f of features) {
+    if (f.properties.highway && f.geometry.type === 'LineString') {
+      const width = ['footway', 'path', 'steps'].includes(f.properties.highway) ? 2 : f.properties.highway === 'service' ? 5 : 14;
+      roads.push({points: f.geometry.coordinates.map(local), width, name: f.properties.name || '', highway:f.properties.highway, bridge:f.properties.bridge, tunnel:f.properties.tunnel, layer:f.properties.layer});
+    }
+  }
+  // Footprints first, so the square-level prior (mostly small untagged footprints, as in tag-poor suburbs) is known
+  // before any building is classified. In a downtown of tagged towers the prior is false and nothing below changes.
+  const footprints=[];
+  for (const f of features) {
     if (f.properties.building && f.properties.building !== 'no') {
       const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [];
       for (const poly of polys) {
@@ -45,20 +60,46 @@ export function parseWorld(raw, origin = ORIGIN) {
         if (rings.flat().length > 2000) continue;
         const points = rings[0];
         const bounds = [Math.min(...points.map(p=>p[0])), Math.min(...points.map(p=>p[1])), Math.max(...points.map(p=>p[0])), Math.max(...points.map(p=>p[1]))];
-        const h=height(f.properties),area=Math.abs(points.reduce((sum,a,i)=>{const b=points[(i+1)%points.length];return sum+a[0]*b[1]-b[0]*a[1];},0))/2;
-        buildings.push({rings,bounds,height:h,id:f.id,style:buildingStyle(f.properties,{height:h,area,landuse:contextLanduse(zones,bounds)})});
+        footprints.push({f,rings,bounds,area:ringArea(points)});
       }
     }
-    if (f.properties.highway && f.geometry.type === 'LineString') {
-      const width = ['footway', 'path', 'steps'].includes(f.properties.highway) ? 2 : f.properties.highway === 'service' ? 5 : 14;
-      roads.push({points: f.geometry.coordinates.map(local), width, name: f.properties.name || '', highway:f.properties.highway, bridge:f.properties.bridge, tunnel:f.properties.tunnel, layer:f.properties.layer});
-    }
+  }
+  const generic=footprints.filter(p=>['yes','building'].includes(p.f.properties.building));
+  const prior=generic.length>=8&&generic.filter(p=>p.area<=250).length/generic.length>=0.7;
+  for (const {f,rings,bounds,area} of footprints) {
+    const landuse=contextLanduse(zones,bounds),nearRoad=landuse?null:nearestRoadClass(bounds,roads);
+    const residential=landuse==='residential'||(!landuse&&prior&&residentialRoads.has(nearRoad));
+    const h=height(f.properties,{residential,area}),heightDefault=!hasHeightTag(f.properties);
+    buildings.push({rings,bounds,height:h,id:f.id,style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior})});
   }
   for(const b of buildings)b.frontEdge=storefrontEdge(b,roads);
   if (!buildings.length) throw new Error('No usable building footprints returned.');
-  return {buildings, roads, origin, timestamp: raw.osm3s?.timestamp_osm_base || null};
+  const kinds=BUILDING_STYLES.map(()=>0);for(const b of buildings)kinds[b.style.kind]++;
+  return {buildings, roads, origin, kinds, prior, timestamp: raw.osm3s?.timestamp_osm_base || null};
 }
 function distanceToBox(b, x, y) {return Math.hypot(Math.max(b[0]-x, 0, x-b[2]), Math.max(b[1]-y, 0, y-b[3]));}
+// Gable over a four-point ring: ridge along the longer axis at `h + 0.29 × short side` (about a 30° pitch), two sloped
+// quads and two vertical gable triangles. Eighteen vertices against six for the flat roof it replaces.
+export const GABLE_RISE = 0.29;
+export function gableRoof(ring, h, triangle) {
+  const len = (a, b) => Math.hypot(b[0]-a[0], b[1]-a[1]), mid = (a, b) => [(a[0]+b[0])/2, (a[1]+b[1])/2];
+  const s = len(ring[0], ring[1]) >= len(ring[1], ring[2]) ? 0 : 1, q = [0,1,2,3].map(i => ring[(s+i)%4]);
+  const rise = GABLE_RISE * Math.min(len(q[1], q[2]), len(q[3], q[0])), z = h + rise;
+  const A = [...mid(q[3], q[0]), z], B = [...mid(q[1], q[2]), z], cx = (q[0][0]+q[1][0]+q[2][0]+q[3][0])/4, cy = (q[0][1]+q[1][1]+q[2][1]+q[3][1])/4;
+  function face(a, b, c) {
+    const u = [b[0]-a[0], b[1]-a[1], b[2]-a[2]], v = [c[0]-a[0], c[1]-a[1], c[2]-a[2]];
+    let n = [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
+    const l = Math.hypot(...n) || 1; n = n.map(x => x/l);
+    // Outward: up for sloped faces, away from the footprint centre for the vertical gables.
+    const outward = Math.abs(n[2]) > 1e-6 ? n[2] : n[0]*((a[0]+b[0]+c[0])/3-cx) + n[1]*((a[1]+b[1]+c[1])/3-cy);
+    if (outward < 0) n = n.map(x => -x);
+    triangle(a, b, c, n);
+  }
+  const P = q.map(p => [p[0], p[1], h]);
+  face(P[0], P[1], B); face(P[0], B, A);
+  face(P[2], P[3], A); face(P[2], A, B);
+  face(P[1], P[2], B); face(P[3], P[0], A);
+}
 export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
   const pos = [], normal = [], uv = [], styles=[];let code=0,floor=32;
   function triangle(a,b,c,n,ta=[0,0],tb=[0,0],tc=[0,0]) {pos.push(...a,...b,...c); normal.push(...n,...n,...n); uv.push(...ta,...tb,...tc);styles.push(code,floor,code,floor,code,floor);}
@@ -72,12 +113,17 @@ export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
       const [a,c,d,e] = b.bounds; rings = [[[a,c],[d,c],[d,e],[a,e]]]; simplified++;
       if (pos.length/3 + 36 > budget.vertices) break;
     }
-    const vectors = rings.map(r=>r.map(p=>new Vector2(...p)));
-    const roof = ShapeUtils.triangulateShape(vectors[0], vectors.slice(1));
-    const flat = rings.flat();
-    for(const t of roof) triangle(...t.map(i=>[...flat[i],b.height]),[0,0,1]);
+    // Illustrative gable on small rectangular homes (four-point outer ring, ≤ 250 m², not simplified); everything else keeps its flat roof.
+    if (b.style?.kind===1 && rings===b.rings && rings.length===1 && rings[0].length===4 && ringArea(rings[0])<=250) gableRoof(rings[0], b.height, triangle);
+    else {
+      const vectors = rings.map(r=>r.map(p=>new Vector2(...p)));
+      const roof = ShapeUtils.triangulateShape(vectors[0], vectors.slice(1));
+      const flat = rings.flat();
+      for(const t of roof) triangle(...t.map(i=>[...flat[i],b.height]),[0,0,1]);
+    }
     for(const ring of rings) for(let i=0;i<ring.length;i++) {
-      code=(b.style?.kind||0)+(rings===b.rings&&ring===rings[0]&&i===b.frontEdge?8:0);
+      // +8 marks the street-facing shopfront edge, +16 a home's street-facing door edge; both leave the style kind in the low bits.
+      code=(b.style?.kind||0)+(rings===b.rings&&ring===rings[0]&&i===b.frontEdge?(b.style?.storefront?8:16):0);
       const a = ring[i], b2 = ring[(i+1)%ring.length], dx=b2[0]-a[0], dy=b2[1]-a[1], l=Math.hypot(dx,dy);
       if(l<0.01) continue;
       const n=[dy/l,-dx/l,0], p=[...a,0], q=[...b2,0], r=[...b2,b.height], s=[...a,b.height];

@@ -3,9 +3,21 @@ import * as maplibregl from 'maplibre-gl';
 import {ORIGIN, LIMITS} from './world.js';
 import {createChevron} from './chevron.js';
 import {LOD} from './chunks.js';
+export const TREES=Object.freeze({max:700,radius:220});
+// Unit tree (1 m tall, crown radius 1): trunk to 40 % height, crown centred at 62 %. ~78 vertices, shared by every instance.
+function treeModel(){
+  const trunk=new THREE.CylinderGeometry(.07,.10,.45,3,1,true).rotateX(Math.PI/2).translate(0,0,.225),crown=new THREE.IcosahedronGeometry(1,0).scale(1,1,.36).translate(0,0,.62).toNonIndexed();
+  const parts=[trunk.toNonIndexed(),crown],g=new THREE.BufferGeometry();let n=0;for(const p of parts)n+=p.attributes.position.count;
+  const pos=new Float32Array(n*3),nor=new Float32Array(n*3),style=new Uint8Array(n*2);let at=0;
+  parts.forEach((p,k)=>{p.computeVertexNormals();pos.set(p.attributes.position.array,at*3);nor.set(p.attributes.normal.array,at*3);for(let i=0;i<p.attributes.position.count;i++)style[(at+i)*2]=k+1;at+=p.attributes.position.count;});
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nor,3));g.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(n*2),2));g.setAttribute('style',new THREE.BufferAttribute(style,2));return g;
+}
 
 const vertexShader = `attribute vec2 style; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle;
 void main(){local=position;norm=normal;facade=uv;buildingStyle=style;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+// Trees: one instanced low-poly model (3-sided trunk, 20-face crown); each instance matrix carries position and size.
+const treeVertexShader = `attribute vec2 style; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle;
+void main(){vec4 w=instanceMatrix*vec4(position,1.);local=w.xyz;norm=normalize(mat3(instanceMatrix)*normal);facade=instanceMatrix[3].xy;buildingStyle=style;gl_Position=projectionMatrix*modelViewMatrix*w;}`;
 // Analytic material cues: no textures, shadow maps, reflection targets or extra passes.
 // The afternoon light is art direction, independent of the measured compass/sun check.
 const fragmentShader = `precision highp float;
@@ -19,7 +31,7 @@ void main(){
  vec3 view=normalize(vec3(eye,1.65)-local);
  vec3 color;
  // kind 0: full-detail buildings; kind 3: far-field silhouettes (same light, no façade); 1 ground; 2 roads.
- if(kind<.5||kind>2.5){
+ if(kind<.5||(kind>2.5&&kind<3.5)){
   vec3 n=normalize(norm);
   // Façade detail fades out across the LOD band so near and far buildings share one surface at the boundary.
   float detail=kind>2.5?0.:1.-smoothstep(fade.x,fade.y,d);
@@ -83,14 +95,37 @@ void main(){
  }else if(kind<1.5){
    color=vec3(.64,.54,.40);
    vec2 tile=abs(fract(local.xy/2.)-.5);color*=1.-.10*step(.48,max(tile.x,tile.y));
+ }else if(kind>3.5){
+   // Trees: brown trunk, crown green varied per instance (hash of its position) and lit like the buildings.
+   vec3 n=normalize(norm);float light=max(dot(n,sun),0.);float h=fract(sin(dot(facade,vec2(12.9898,78.233)))*43758.5453);
+   color=buildingStyle.x<1.5?vec3(.36,.28,.21)*(.7+.4*light):mix(vec3(.25,.37,.19),vec3(.36,.44,.22),h)*(.62+.5*light);
+   color*=1.-.10*(grain(floor(local.xy*3.+local.z*5.))-.5);
  }else{
-   color=vec3(.29,.29,.27);
-   // Broad, restrained grazing sheen reads as worn aggregate rather than a wet mirror.
+   // Style x: 0 two-way road, 7 one-way road, 8 road of unknown direction, 6 footway, 1 grass, 2 wood, 3 water, 4 parking, 5 plaza. Style y: road width × 10.
+   float surf=buildingStyle.x,width=buildingStyle.y*.1;
    float grazing=1.-max(view.z,0.);grazing*=grazing;
-   color+=vec3(.14,.105,.055)*grazing;
    float footprint=max(fwidth(local.x*14.),fwidth(local.y*14.));
    float detail=(1.-smoothstep(8.,38.,d))*(1.-smoothstep(.35,1.,footprint));
-   color+=(grain(floor(local.xy*14.))-.5)*.035*detail;
+   if(surf<.5||surf>5.5||(surf>3.5&&surf<4.5)){
+    color=surf>5.5&&surf<6.5?vec3(.60,.58,.54):surf>3.5?vec3(.34,.34,.32):vec3(.29,.29,.27);
+    color+=vec3(.14,.105,.055)*grazing;
+    color+=(grain(floor(local.xy*14.))-.5)*.035*detail;
+    // Painted markings from the quad's (along, across) coordinates: double yellow centre and white edge lines on
+    // roads at least 10 m wide, faded out by 90 m so they never shimmer. No geometry is added.
+    // Painted markings from the quad's (along, across) coordinates, only on roads at least 10 m wide and faded out by
+    // 90 m so they never shimmer. Two-way (0): double yellow centre. One-way (7): dashed white lane divider. Roads whose
+    // direction is unknown (8, older cached road packages) and one-lane one-ways stay plain. No edge lines: overlapping
+    // OSM ways at junctions would paint them across the carriageway. No geometry is added.
+    if(width>9.5&&(surf<.5||(surf>6.5&&surf<7.5))){
+     float across=facade.y*width*.5,paint=1.-smoothstep(40.,90.,d);
+     if(surf<.5){float centre=step(.08,abs(across))*step(abs(across),.2);color=mix(color,vec3(.80,.66,.25),centre*paint*.85);}
+     else{float lane=step(abs(across),.07)*step(fract(facade.x/9.),.33);color=mix(color,vec3(.86,.86,.82),lane*paint*.75);}
+    }
+    if(surf>5.5&&surf<6.5)color*=1.-.10*step(.94,fract(facade.x/1.5));
+   }else if(surf<1.5){color=vec3(.41,.50,.28)*(1.+(grain(floor(local.xy*2.))-.5)*.14);}
+   else if(surf<2.5){color=vec3(.29,.38,.22)*(1.+(grain(floor(local.xy*1.5))-.5)*.2);}
+   else if(surf<3.5){vec3 reflected=reflect(-view,vec3(0,0,1));color=mix(vec3(.19,.30,.34),vec3(.58,.70,.76),smoothstep(-.1,.5,reflected.z)*.55+grazing*.35);color+=vec3(.85,.70,.45)*pow(max(dot(reflected,sun),0.),40.);}
+   else{color=vec3(.70,.65,.56);vec2 tile=abs(fract(local.xy/1.2)-.5);color*=1.-.08*step(.46,max(tile.x,tile.y));}
    // Roads end at their own 180 m reach; blend them into the ground before it so no edge shows in the wider fog.
    color=mix(color,vec3(.64,.54,.40),smoothstep(radius*.72,radius,d));
  }
@@ -98,7 +133,7 @@ void main(){
  gl_FragColor=vec4(mix(color,fog,haze*.94),1.);
 }`;
 export function createWorldLayer(player, metrics, onChevronAnchor=null) {
-  let renderer, scene, camera, building, far, ground, roads, map, chevron;
+  let renderer, scene, camera, building, far, ground, roads, surfaces, trees, map, chevron;
   const anchor=new THREE.Vector4();
   const eye=new THREE.Vector2(), projection=new THREE.Matrix4(), localMatrix=new THREE.Matrix4();
   // Local metres → Mercator. Re-anchoring a GPS area moves the origin; geometry arrives already relative to it.
@@ -106,7 +141,8 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
   setOrigin(ORIGIN);
   // Buildings, silhouettes and ground are cut off at the far LOD radius; roads keep 180 m. One fog curve spans all of them.
   const fade=new THREE.Vector2(...LOD.fade);
-  const materials=[0,1,2,3].map(kind=>new THREE.ShaderMaterial({vertexShader,fragmentShader,uniforms:{eye:{value:eye},radius:{value:kind===2?LIMITS.radius:LOD.far},fogRadius:{value:LOD.far},fade:{value:fade},kind:{value:kind}},side:THREE.DoubleSide,defaultAttributeValues:{style:[0,32]}}));
+  // Materials: 0 buildings, 1 ground, 2 roads (180 m), 3 silhouettes, 4 surfaces (road shader, far radius), 5 trees.
+  const materials=[0,1,2,3,2,4].map((kind,i)=>new THREE.ShaderMaterial({vertexShader:kind===4?treeVertexShader:vertexShader,fragmentShader,uniforms:{eye:{value:eye},radius:{value:i===2?LIMITS.radius:i===5?TREES.radius:LOD.far},fogRadius:{value:LOD.far},fade:{value:fade},kind:{value:kind}},side:kind===4?THREE.FrontSide:THREE.DoubleSide,defaultAttributeValues:{style:[0,32]}}));
   function geometry(data){const g=new THREE.BufferGeometry();for(const [key,size] of [['position',3],['normal',3],['uv',2]])g.setAttribute(key,new THREE.BufferAttribute(data[key],size));g.setAttribute('style',new THREE.BufferAttribute(data.style||new Uint8Array(data.position.length/3*2),2));return g;}
   const layer={id:'osm-world',type:'custom',renderingMode:'3d',setOrigin,
     onAdd(m,gl){
@@ -130,16 +166,28 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
     },
     setRoads(data){
       if(roads){scene.remove(roads);roads.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
-      const p=[];
-      for(const road of data)for(let i=1;i<road.points.length;i++){
+      // uv = (metres along the road, −1…1 across) and style = (surface, width × 10) let the shader paint markings.
+      const p=[],uv=[],st=[];
+      for(const road of data){let along=0;for(let i=1;i<road.points.length;i++){
         const a=road.points[i-1],b=road.points[i],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);if(len<.01)continue;
         if(p.length/3+6>18000)break;
-        const x=-dy/len*road.width/2,y=dx/len*road.width/2;
-        const v=[[a[0]+x,a[1]+y,0],[a[0]-x,a[1]-y,0],[b[0]-x,b[1]-y,0],[b[0]+x,b[1]+y,0]];
-        for(const j of [0,1,2,0,2,3])p.push(...v[j]);
-      }
-      const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(p,3));g.setAttribute('normal',new THREE.Float32BufferAttribute(new Float32Array(p.length),3));g.setAttribute('uv',new THREE.Float32BufferAttribute(new Float32Array(p.length/3*2),2));
+        const x=-dy/len*road.width/2,y=dx/len*road.width/2,surf=road.width<=2?6:road.oneway===undefined?8:road.oneway?(road.lanes===1?8:7):0,w=Math.min(255,Math.round(road.width*10));
+        const v=[[a[0]+x,a[1]+y,0],[a[0]-x,a[1]-y,0],[b[0]-x,b[1]-y,0],[b[0]+x,b[1]+y,0]],t=[[along,1],[along,-1],[along+len,-1],[along+len,1]];
+        for(const j of [0,1,2,0,2,3]){p.push(...v[j]);uv.push(...t[j]);st.push(surf,w);}along+=len;
+      }}
+      const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(p,3));g.setAttribute('normal',new THREE.Float32BufferAttribute(new Float32Array(p.length),3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setAttribute('style',new THREE.BufferAttribute(new Uint8Array(st),2));
       roads=new THREE.Mesh(g,materials[2]);roads.frustumCulled=false;scene.add(roads);metrics.roadVertices=p.length/3;
+    },
+    setSurfaces(data){
+      if(surfaces){scene.remove(surfaces);surfaces.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
+      surfaces=new THREE.Mesh(geometry(data),materials[4]);surfaces.frustumCulled=false;scene.add(surfaces);metrics.surfaceVertices=data.position.length/3;metrics.surfaces=data.count;map?.triggerRepaint();
+    },
+    // `packed` is [x, y, height, crown radius] × n. The instance buffer is allocated once at TREES.max and reused.
+    setTrees(packed){
+      if(!trees){trees=new THREE.InstancedMesh(treeModel(),materials[5],TREES.max);trees.frustumCulled=false;scene.add(trees);}
+      const m=new THREE.Matrix4(),n=Math.min(TREES.max,packed.length/4);
+      for(let i=0;i<n;i++){const [x,y,h,r]=packed.subarray(i*4,i*4+4);m.makeScale(r,r,h).setPosition(x,y,0);trees.setMatrixAt(i,m);}
+      trees.count=n;trees.instanceMatrix.needsUpdate=true;metrics.trees=n;map?.triggerRepaint();
     },
     render(gl,args){
       eye.set(player.x,player.y);
@@ -155,6 +203,6 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
       metrics.drawCalls=renderer.info.render.calls;metrics.triangles=renderer.info.render.triangles;metrics.renderedFrames++;
       metrics.chevron.bearing=player.chevronHeading??player.heading;
     },
-    onRemove(){for(const object of [building,far,ground,roads])object?.geometry.dispose();chevron?.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
+    onRemove(){for(const object of [building,far,ground,roads,surfaces,trees])object?.geometry.dispose();chevron?.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
   };return layer;
 }

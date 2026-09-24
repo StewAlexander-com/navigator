@@ -14,7 +14,7 @@ try{
   const [longitude,latitude]=toLngLat(x,y);await context.setGeolocation({longitude,latitude,accuracy:49});
   await page.waitForFunction(([x,y])=>{const d=window.navigatorDiagnostics();return Math.hypot(d.player.x-x,d.player.y-y)<1&&!d.busy;},[x,y]);
   await page.waitForTimeout(200);const d=await page.evaluate(()=>window.navigatorDiagnostics());samples.push(d);
-  assert.equal(d.area.live,false);assert.equal(d.metrics.drawCalls,8);assert.ok(d.metrics.stream.resident<=28);assert.ok(d.metrics.vertices<=90000);assert.ok(d.metrics.buildings<=160);assert.ok(d.metrics.roadVertices<=18000);
+  assert.equal(d.area.live,false);assert.equal(d.metrics.drawCalls,10);assert.ok(d.metrics.stream.resident<=28);assert.ok(d.metrics.vertices<=90000);assert.ok(d.metrics.buildings<=160);assert.ok(d.metrics.roadVertices<=18000);
  }
  const final=samples.at(-1);assert.ok(final.metrics.stream.evicted>0);assert.ok(final.metrics.stream.promoted>0);assert.ok(final.metrics.disposedBuffers>0);assert.equal(final.sensors.fixes.rejected,0);
  const disposed=final.metrics.disposedBuffers;await page.waitForTimeout(1000);assert.equal((await page.evaluate(()=>window.navigatorDiagnostics())).metrics.disposedBuffers,disposed);

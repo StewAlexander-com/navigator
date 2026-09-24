@@ -14,6 +14,6 @@ try{
  const clear=await page.evaluate(()=>window.checkWorldOcclusion(false));await page.screenshot({path:'test-results/chevron-world-clear.png'});
  const blocked=await page.evaluate(()=>window.checkWorldOcclusion(true));await page.screenshot({path:'test-results/chevron-world-blocked.png'});
  const restored=await page.evaluate(()=>window.checkWorldOcclusion(false));
- assert.ok(clear.cyan>100);assert.equal(blocked.cyan,0);assert.equal(restored.cyan,clear.cyan);assert.equal(blocked.metrics.drawCalls,8);assert.deepEqual(errors,[]);
+ assert.ok(clear.cyan>100);assert.equal(blocked.cyan,0);assert.equal(restored.cyan,clear.cyan);assert.equal(blocked.metrics.drawCalls,10);assert.deepEqual(errors,[]);
  const result={isolated,world:{clear,blocked,restored},errors};await fs.writeFile('test-results/chevron-results.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
 }finally{await browser.close();}

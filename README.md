@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.18 · Prototype G** adds a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track, retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.19 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,16 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Street surroundings from OSM (v0.1.19)
+
+Three additions, chosen for visual gain per byte and per frame. Each uses data OSM actually has; where it does not, the app says so rather than inventing detail.
+
+- **Ground surfaces.** Parks, gardens, pitches, grass, cemeteries (green); woods and scrub (darker green); water (sky-reflecting, sun glint); surface parking (lighter asphalt; underground, multi-storey and rooftop parking excluded); plazas and pedestrian areas (paving grid). Flat triangulated polygons in one mesh, each surface type a few millimetres below the roads so nothing z-fights. Drawn to the 300 m far radius; cap 30,000 vertices, 600 areas, 400 points per area.
+- **Trees.** OSM `natural=tree` nodes (with `height` when tagged), `natural=tree_row` every 8 m, and — illustrative, like the windows — a deterministic, jittered 14 m grid (9 m in woods, at most 80 per area) inside parks, gardens, cemeteries, recreation grounds and woods, never inside a building footprint. One instanced low-poly model (3-sided trunk, 20-face crown, about 78 vertices) with per-instance size and a per-position crown tint; one draw call for up to 700 trees within 220 m. The Performance panel shows mapped vs illustrative counts. OSM street-tree coverage varies widely by city; where it is sparse, streets stay bare.
+- **Lane markings.** Painted in the road shader from each quad's along/across coordinates, with no added geometry: a double yellow centre line on two-way roads at least 10 m wide, a dashed white divider on one-way roads (`oneway`, motorways and roundabouts) unless tagged `lanes=1`. Markings fade out by 90 m to avoid shimmer. Road packages cached before v0.1.19 carry no direction, so those roads stay plain until the package refreshes. No edge lines, because overlapping OSM ways at junctions would paint them across the carriageway; centre lines still run through intersections, which real paint does not.
+
+Cost, bundled LA at the start pose: 174 areas and 607 trees parsed in 19.5 ms (258 mapped trees, 349 illustrative); 26 surfaces (624 vertices) and 33 trees drawn; 9.3 KB of new per-view buffers; surfaces 1.4 ms and tree selection 0.4 ms per refresh, rebuilt only after 40 m of movement. World draw calls rise from 8 to 10 (surfaces, trees). The bundled area loads `public/osm-extras.json` (189 KB, an Overpass extract padded about 300 m around the LA box); live squares request the same tags in their one Overpass query, which makes responses somewhat larger. A city with dense street-tree mapping gets closer to the 8 MiB response cap, where the existing smaller-square fallback applies.
 
 ### Driving position track (v0.1.18)
 

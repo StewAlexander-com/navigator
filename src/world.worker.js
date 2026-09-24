@@ -1,9 +1,21 @@
-import {parseWorld, LIMITS, BBOX, ORIGIN, toLocal} from './world.js';
+import {parseWorld, parseExtrasRaw, buildSurfaces, nearTrees, LIMITS, BBOX, ORIGIN, toLocal} from './world.js';
+import {LOD} from './chunks.js';
 import {areaAround, areaCovers} from './sensors.js';
 import {createChunkStream} from './chunks.js';
 import {validateSectorGraph} from './sectors.js';
 import {locateBuilding} from './indoor.js';
-let world,stream;
+let world,stream,extrasAt=null;
+// Surfaces and trees are rebuilt only after 40 m of movement or a new area; trees reach 220 m, surfaces the far LOD radius.
+export const EXTRA_VIEW=Object.freeze({trees:700,treeRadius:220,surfaceVertices:30000,refresh:40});
+function extras(x,y,force){
+ if(!world?.areas||(!force&&extrasAt&&Math.hypot(x-extrasAt[0],y-extrasAt[1])<EXTRA_VIEW.refresh))return null;
+ extrasAt=[x,y];const surfaces=buildSurfaces(world.areas,x,y,LOD.far,EXTRA_VIEW.surfaceVertices),trees=nearTrees(world.trees,x,y,EXTRA_VIEW.treeRadius,EXTRA_VIEW.trees);
+ return {surfaces,trees,areaCount:world.areas.length,treeCount:world.trees.length,mappedTrees:world.trees.filter(t=>t[4]).length};
+}
+async function loadExtras(url,parsed){
+ try{const response=await fetch(new URL('osm-extras.json',url),{signal:AbortSignal.timeout(6000),credentials:'omit'});if(!response.ok)return;
+  const text=await response.text();if(text.length>2*1024*1024)return;const e=parseExtrasRaw(JSON.parse(text),parsed.origin,parsed.buildings);parsed.areas=e.areas;parsed.trees=e.trees;}catch{/* Surfaces and trees are optional. */}
+}
 // Retry-After may be seconds or an HTTP date; anything unparseable falls back to 60 s.
 function retryAfterMs(response){const raw=response.headers.get('retry-after');if(!raw)return 60000;const seconds=Number(raw);if(Number.isFinite(seconds))return Math.max(1000,seconds*1000);const at=Date.parse(raw);return Number.isFinite(at)?Math.max(1000,at-Date.now()):60000;}
 // `report` receives {phase, bytes, total} at most every ~120 ms while a body streams, then once for the parse phase.
@@ -22,7 +34,7 @@ async function download(url, origin, fingerprint=false, report=null) {
   let parsed;try{parsed=parseWorld(JSON.parse(new TextDecoder().decode(buffer)),origin);}catch(error){if(/Incomplete or oversized/.test(error.message))error.dense=true;throw error;}
   return {parsed,size,sourceHash};
 }
-const overpassUrl=([south,west,north,east])=>'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(`[out:json][timeout:25];(way[building](${south},${west},${north},${east});relation[building](${south},${west},${north},${east});way[highway](${south},${west},${north},${east});way[landuse~"^(residential|retail|industrial)$"](${south},${west},${north},${east});relation[landuse~"^(residential|retail|industrial)$"](${south},${west},${north},${east}););out geom;`);
+const overpassUrl=([south,west,north,east])=>'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(`[out:json][timeout:25];(way[building](${south},${west},${north},${east});relation[building](${south},${west},${north},${east});way[highway](${south},${west},${north},${east});way[landuse~"^(residential|retail|industrial|grass|recreation_ground|cemetery|forest|meadow|village_green|flowerbed)$"](${south},${west},${north},${east});way[leisure~"^(park|garden|playground|pitch|dog_park)$"](${south},${west},${north},${east});relation[leisure~"^(park|garden)$"](${south},${west},${north},${east});way[natural~"^(water|wood|scrub|grassland|tree_row)$"](${south},${west},${north},${east});way[amenity=parking](${south},${west},${north},${east});way[place=square](${south},${west},${north},${east});node[natural=tree](${south},${west},${north},${east});relation[landuse~"^(residential|retail|industrial)$"](${south},${west},${north},${east}););out geom;`);
 const osmApiUrl=([south,west,north,east])=>`https://api.openstreetmap.org/api/0.6/map.json?bbox=${west},${south},${east},${north}`;
 // Live areas try Overpass, then the OSM API. Both providers reveal the bounding box to that service.
 // A rate limit (429/503) means slow down, not switch providers; an oversized or dense (504/timeout) square means shrink it.
@@ -98,12 +110,13 @@ self.onmessage = async ({data}) => {
       } else {
         result = await download(data.url, ORIGIN, true, report); result.provider = 'Bundled OSM';
         result.graph = await loadSectors(data.url,result.parsed,result.sourceHash);
+        await loadExtras(data.url,result.parsed);
       }
       world = result.parsed; stream = createChunkStream(world,result.graph); world.bbox = bbox; world.radius = radius; bytes = result.size; provider = result.provider;
       report({phase:'building',bytes,total:null});
     }
     if(!world)throw new Error('Load an area first.');
-    const result=stream.update(data.x||0,data.y||0,data.heading||0),g=result.geometry,f=result.far;
-    self.postMessage({type:'ready',id:data.id,x:data.x||0,y:data.y||0,heading:data.heading||0,...result,areaLoaded:data.type==='load',origin:world.origin,bbox:world.bbox,radius:world.radius,timestamp:world.timestamp,kinds:world.kinds,prior:world.prior,bytes,provider,cached,ms:performance.now()-start,live:data.live||!!data.center},[...(g?[g.position.buffer,g.normal.buffer,g.uv.buffer,g.style.buffer]:[]),...(f?[f.position.buffer,f.normal.buffer,f.uv.buffer,f.style.buffer]:[])]);
+    const result=stream.update(data.x||0,data.y||0,data.heading||0),g=result.geometry,f=result.far,e=extras(data.x||0,data.y||0,data.type==='load');if(e)result.extras=e;
+    self.postMessage({type:'ready',id:data.id,x:data.x||0,y:data.y||0,heading:data.heading||0,...result,areaLoaded:data.type==='load',origin:world.origin,bbox:world.bbox,radius:world.radius,timestamp:world.timestamp,kinds:world.kinds,prior:world.prior,bytes,provider,cached,ms:performance.now()-start,live:data.live||!!data.center},[...(g?[g.position.buffer,g.normal.buffer,g.uv.buffer,g.style.buffer]:[]),...(f?[f.position.buffer,f.normal.buffer,f.uv.buffer,f.style.buffer]:[]),...(e?[e.surfaces.position.buffer,e.surfaces.normal.buffer,e.surfaces.uv.buffer,e.surfaces.style.buffer,e.trees.buffer]:[])]);
   }catch(error){self.postMessage({type:'error',id:data.id,message:error.message,oversized:!!error.oversized,retryMs:error.retryMs||null});}
 };

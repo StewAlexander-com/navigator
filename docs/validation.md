@@ -199,3 +199,11 @@ Recorded 2026-09-24 on Linux (sandbox, Node 20, headless Chromium with software 
 - `npm run sim:drive`: see README "Driving position track" for the table.
 - Bundled LA in the preview build: 8 world draw calls, 12 full / 20 silhouette chunks, 57 silhouette buildings / 3,150 vertices, no page errors; screenshot inspected.
 - Not re-run to completion here: the timing-dependent browser checks (`test:browser`, `test:stream`). Software GL in this sandbox renders about 4 frames per second for both v0.1.17 and v0.1.18, so the walk-distance and timeout assertions fail for both builds. Their draw-call expectations were updated from 7 to 8. Re-run on macOS before treating Prototype G as validated; the real-device fps / memory check over a drive is also outstanding.
+
+## v0.1.19 — OSM surfaces, trees and lane markings
+
+Recorded 2026-09-24 on Linux (sandbox, Node 20, headless Chromium with software GL).
+
+- `npm test`: 84 passed, 0 failed (82 before). New `tests/extras.test.mjs`: surface classification and ordering (underground parking excluded), mapped trees first with tagged height, tree-row spacing, illustrative park trees bounded per area, deterministic and never inside a footprint, surfaces below the road plane, nearest-tree cap; bundled LA extras within budget and parsed in under 500 ms; South Spring Street parsed as one-way and at least one two-way 14 m road.
+- Preview build: 10 world draw calls, 26 surfaces / 624 vertices, 33 trees drawn from 607 (258 mapped), no page errors. Screenshots inspected: dashed white divider on one-way South Spring Street, double yellow on the two-way cross street, OSM trees at the end of the block.
+- Browser checks' draw-call expectations updated from 8 to 10. The timing-dependent browser checks were not re-run to completion here, for the same software-GL reason as v0.1.18.

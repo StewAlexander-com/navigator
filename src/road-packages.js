@@ -46,7 +46,7 @@ export function parsePackage(raw,t,center){
    const clipped=circle(...segment,center,ROAD_CACHE.radius-.05);if(!clipped)continue;
    for(const p of clipped){p[0]=Math.max(t.bbox[1],Math.min(t.bbox[3],mid+wrap(p[0]-mid)));p[1]=Math.max(t.bbox[0],Math.min(t.bbox[2],p[1]));}
    if(clipped.some(p=>distance(p,center)>ROAD_CACHE.radius))continue;
-   roads.push({id:`${way.id}:${i}`,name:String(way.tags.name||'').slice(0,255),highway:h,width,points:clipped});
+   roads.push({id:`${way.id}:${i}`,name:String(way.tags.name||'').slice(0,255),highway:h,width,oneway:['yes','-1','true','1'].includes(String(way.tags.oneway))||['motorway','motorway_link'].includes(h)||way.tags.junction==='roundabout',lanes:parseInt(way.tags.lanes)||null,points:clipped});
    if(++points>60000)throw Object.assign(new Error('Dense road package needs smaller areas.'),{split:true});
   }
  }

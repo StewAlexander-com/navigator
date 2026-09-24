@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.20 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.21 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,14 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Softer tree crowns (v0.1.21)
+
+The crown is now a once-subdivided icosahedron (80 faces instead of 20), reshaped in the vertex shader by a 3-octave fBm of each vertex's direction and the tree's position. The lumps are coherent and differ per tree, and shared corners get the same value, so the crown never cracks. The same fBm value is passed to the fragment shader as an interpolated "clump" value that varies leaf brightness, with no per-pixel noise. Normals are 85 % smoothed toward the crown shape, so facet edges no longer show in the shading. The underside is lifted: wrapped diffuse (+0.4), a sky-bounce fill, and an underside factor of 0.88–1.05 (was 0.72–1.08).
+
+A per-pixel fBm version was tried first and rejected. It cost about 40 hash evaluations per tree pixel, and its silhouette-cutout variant stippled the crown edges. Per-vertex noise costs 24 hash evaluations per vertex (about 258 vertices per tree) and nothing per pixel.
+
+Cost: tree model 78 → 258 vertices. The typical LA view (33 trees) is about 8,500 tree vertices; the 700-tree cap is about 180,000, and it is only reached inside large mapped parks. Draw calls unchanged at 11. `tests/trees.html` (dev server) renders a broadleaf, conifer and palm at 12–18 m for visual checks.
 
 ### Road flicker fix and tree polish (v0.1.20)
 

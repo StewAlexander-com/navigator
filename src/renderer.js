@@ -6,28 +6,30 @@ import {LOD} from './chunks.js';
 export const TREES=Object.freeze({max:700,radius:220});
 // Unit tree (1 m tall, crown radius 1): trunk to 40 % height, crown centred at 62 %. ~78 vertices, shared by every instance.
 function treeModel(){
-  const trunk=new THREE.CylinderGeometry(.07,.10,.45,3,1,true).rotateX(Math.PI/2).translate(0,0,.225),crown=new THREE.IcosahedronGeometry(1,0).scale(1,1,.36).translate(0,0,.62);
+  const trunk=new THREE.CylinderGeometry(.07,.10,.45,3,1,true).rotateX(Math.PI/2).translate(0,0,.225),crown=new THREE.IcosahedronGeometry(1,1).scale(1,1,.36).translate(0,0,.62);
   const parts=[trunk.toNonIndexed(),crown],g=new THREE.BufferGeometry();let n=0;for(const p of parts)n+=p.attributes.position.count;
   const pos=new Float32Array(n*3),nor=new Float32Array(n*3),style=new Uint8Array(n*2);let at=0;
   parts.forEach((p,k)=>{p.computeVertexNormals();pos.set(p.attributes.position.array,at*3);nor.set(p.attributes.normal.array,at*3);for(let i=0;i<p.attributes.position.count;i++)style[(at+i)*2]=k+1;at+=p.attributes.position.count;});
   g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nor,3));g.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(n*2),2));g.setAttribute('style',new THREE.BufferAttribute(style,2));return g;
 }
 
-const vertexShader = `attribute vec2 style; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height;
-void main(){height=0.;local=position;norm=normal;facade=uv;buildingStyle=style;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+const vertexShader = `attribute vec2 style; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height; varying float clump;
+void main(){height=0.;clump=.5;local=position;norm=normal;facade=uv;buildingStyle=style;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
 // Trees: one instanced low-poly model (3-sided trunk, 20-face crown); each instance matrix carries position and size.
 // Per-instance shape (0 broadleaf, 1 conifer, 2 palm) morphs one shared unit model in the vertex shader, so three
 // species shapes still cost one draw call. Each instance also gets a yaw, and crown vertices a stable radial jitter
 // (hash of instance position + vertex position; shared corners hash alike, so the crown never cracks).
-const treeVertexShader = `attribute vec2 style; attribute float shape; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height;
+const treeVertexShader = `attribute vec2 style; attribute float shape; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height; varying float clump;
 float h1(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453);}
+float hv(vec3 p){p=fract(p*.1031);p+=dot(p,p.zyx+31.32);return fract((p.x+p.y)*p.z);}
+float nv(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(mix(hv(i),hv(i+vec3(1,0,0)),f.x),mix(hv(i+vec3(0,1,0)),hv(i+vec3(1,1,0)),f.x),f.y),mix(mix(hv(i+vec3(0,0,1)),hv(i+vec3(1,0,1)),f.x),mix(hv(i+vec3(0,1,1)),hv(i+vec3(1,1,1)),f.x),f.y),f.z);}
 void main(){
- vec3 p=position,n=normal;vec2 id=instanceMatrix[3].xy;float yaw=h1(vec3(id,1.))*6.2832,c=cos(yaw),s=sin(yaw);
+ vec3 p=position,n=normal;clump=.5;vec2 id=instanceMatrix[3].xy;float yaw=h1(vec3(id,1.))*6.2832,c=cos(yaw),s=sin(yaw);
  if(style.x>1.5){
-  vec3 q=p-vec3(0,0,.62);float j=1.+(h1(vec3(id,0.)+floor(position*50.+.5))-.5)*(shape>1.5?.9:.36);q.xy*=j;q.z*=mix(1.,j,.5);
-  vec3 soft=normalize(q*vec3(1,1,2.6));n=normalize(mix(n,soft,.55));
+  vec3 q=p-vec3(0,0,.62);vec3 u=normalize(position-vec3(0,0,.62))*2.2+vec3(id*.13,0.);float lump=.55*nv(u)+.3*nv(u*2.1+4.7)+.15*nv(u*4.3+1.9);float j=1.+(lump-.5)*(shape>1.5?1.1:.55);clump=lump;q.xy*=j;q.z*=shape>.5?1.:mix(1.,j,.5);
+  vec3 soft=normalize(q*vec3(1,1,2.6));n=normalize(mix(n,soft,.85));
   if(shape>1.5){q.xy*=1.35;q.z*=.32;q.z-=dot(q.xy,q.xy)*.09;p=vec3(0,0,.93)+q;}
-  else if(shape>.5){float t=clamp((q.z+.36)/.72,0.,1.);p=vec3(q.xy*(1.05-t)*1.25,.12+t*.95);n=normalize(vec3(n.xy,.45));}
+  else if(shape>.5){float t=clamp((q.z+.36)/.72,0.,1.);p=vec3(q.xy*(1.25-t)*1.1,.14+(q.z+.36)*1.25);n=normalize(vec3(n.xy,.5));}
   else p=vec3(0,0,.62)+q;
  }else if(shape>1.5){p.xy*=.55;p.z*=1.95;}
  p.xy=mat2(c,s,-s,c)*p.xy;n.xy=mat2(c,s,-s,c)*n.xy;
@@ -41,7 +43,7 @@ void main(){float d=distance(local.xy,eye);if(d>radius)discard;float a=(1.-smoot
 // The afternoon light is art direction, independent of the measured compass/sun check.
 const fragmentShader = `precision highp float;
 uniform vec2 eye; uniform float radius; uniform float fogRadius; uniform vec2 fade; uniform float kind;
-varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height;
+varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height; varying float clump;
 float grain(vec2 p){vec3 q=fract(vec3(p.xyx)*.1031);q+=dot(q,q.yzx+33.33);return fract((q.x+q.y)*q.z);}
 void main(){
  float d=distance(local.xy,eye);if(d>radius)discard;
@@ -121,10 +123,14 @@ void main(){
    if(buildingStyle.x<1.5)color=mix(vec3(.24,.19,.15),vec3(.42,.34,.26),smoothstep(0.,.35,height))*(.72+.4*light)*(buildingStyle.y>1.5?1.25:1.);
    else{
     vec3 leaf=buildingStyle.y>1.5?mix(vec3(.36,.44,.20),vec3(.46,.50,.24),h):buildingStyle.y>.5?mix(vec3(.16,.28,.18),vec3(.22,.34,.21),h):mix(vec3(.23,.35,.17),vec3(.37,.46,.22),h);
-    float under=smoothstep(-.6,.5,n.z);
-    color=leaf*(.48+.62*light)*mix(.72,1.08,under);
-    color*=1.+(grain(floor(local.xyz.xy*2.5+local.z*2.5))-.5)*.22;
-    color+=vec3(.10,.09,.04)*pow(light,3.)*under;
+    // Clump value comes from the vertex-shader fBm (interpolated, so no per-pixel noise cost or shimmer).
+    float f=clamp(clump,0.,1.),near=1.-smoothstep(60.,120.,d);
+    // Wrapped diffuse and a sky-bounce fill keep the underside a shaded green, not a near-black band.
+    float wrap=clamp((dot(n,sun)+.4)/1.4,0.,1.),under=smoothstep(-.9,.5,n.z);
+    color=leaf*(.60+.52*wrap)*mix(.88,1.05,under);
+    color+=vec3(.035,.05,.06)*(1.-under);
+    color*=mix(1.,.78+.44*f,near);
+    color+=vec3(.08,.07,.03)*pow(wrap,4.)*under*(.6+.4*f);
    }
  }else{
    // Style x: 0 two-way road, 7 one-way road, 8 road of unknown direction, 6 footway, 1 grass, 2 wood, 3 water, 4 parking, 5 plaza. Style y: road width × 10.

@@ -213,3 +213,7 @@ Recorded 2026-09-24 on Linux (sandbox, Node 20, headless Chromium with software 
 Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 
 - `npm test`: 84 passed, 0 failed. Preview build: 11 world draw calls, 33 trees drawn, no page or shader errors. Screenshots inspected: OSM-tagged palms on South Spring Street render as palms; road edges and markings have no z-fighting in stills. The flicker was seen while moving on a real device, which I could not reproduce here, so it needs confirming there.
+
+## v0.1.21 — softer tree crowns
+
+- `npm test`: 84 passed. `tests/trees.html` close-ups inspected in headless Chromium (software GL): broadleaf crowns round and lumpy with no visible facet lines; the underside is shaded green, not near-black. Conifer and palm crowns show a faint fine cross-hatch in this software renderer. It persisted through every variant tried (with and without noise, one- and two-sided faces), so it is probably specific to the software renderer. Confirm on a real GPU.

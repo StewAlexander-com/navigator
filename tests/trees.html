@@ -1,0 +1,14 @@
+<!doctype html><html><head><style>html,body,#map{margin:0;width:100%;height:100%}</style></head><body><div id="map"></div><script type="module">
+// Visual check for tree shapes and foliage shading: three species at 12–18 m on an empty ground plane.
+import * as maplibregl from 'maplibre-gl';
+import {createWorldLayer} from '../src/renderer.js';
+import {ORIGIN,toLngLat} from '../src/world.js';
+const player={x:0,y:0,heading:0,pitch:0,travelBearing:0},metrics={renderedFrames:0};
+const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#b0bfc9'}}]},center:ORIGIN,zoom:18,maxPitch:95,centerClampedToGround:false,interactive:false,attributionControl:false,canvasContextAttributes:{antialias:false,preserveDrawingBuffer:true}});
+map.on('load',()=>{
+ const layer=createWorldLayer(player,metrics);map.addLayer(layer);layer.setRoads([]);
+ layer.setTrees(new Float32Array([-7,14,8,2.6,0, 0,18,10,2.2,1, 7,13,12,2.4,2, -2,26,9,2.9,0]));
+ map.jumpTo(map.calculateCameraOptionsFromTo(toLngLat(0,0),1.65,toLngLat(0,20),6));
+ window.treesReady=true;
+});
+</script></body></html>

@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.28 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.29 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,21 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Name pills: noise budget (v0.1.29)
+
+A pass aimed at signal-to-noise, not features:
+
+- **Fewer names.** At most two food/landmark names plus one ordinary name, so three pills in total (was 3 + 2).
+- **Tighter ranges.** Food is named within 60 m, which is across the street and a little beyond; landmarks within 120 m, and they take priority over food.
+- **Stricter landmarks.** A landmark needs an explicit public-venue category (library, theatre, museum, place of worship…), or a historic/heritage tag together with a Wikipedia or Wikidata entry. Downtown historic districts tag dozens of ordinary buildings `historic=yes`, and those are no longer landmarks.
+- **No flicker.** Each name keeps its own pill instead of pills swapping text between slots. A new name must remain a candidate for 400 ms before it fades in (0.25 s, none with reduced motion), and a shown name survives 700 ms of dropping out before it fades. A 150 ms timer finishes pending fades after the render loop sleeps.
+- **Nothing while driving.** No pills above 7 m/s in GPS mode.
+- **Less work.** The pick is skipped while position (0.1 m), heading (2°) and anchors are unchanged.
+- **Usable.** Names are truncated with an ellipsis at 200 px (56 % of a phone's width). The ⓘ target is 44 px (a 24 px glyph plus a 10 px invisible margin) and is disabled while its details load. Tapping the ⓘ of the open building does nothing, so it never refetches.
+- **Short cards.** The card shows the six most useful rows first (cuisine, hours, website, type, built, floors…), with the rest behind one "More" tap. Cuisine lists and opening hours are formatted for reading.
+
+Measured on the bundled LA box across ten walk poses (start, reversed, four cross streets, beside Pan American Lofts, and others): at most one name was ever on screen at a time. The start pose now shows none; the nearest food place there is beyond 60 m.
 
 ### Food places and landmarks named from afar (v0.1.28)
 

@@ -251,3 +251,8 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 
 - `npm test`: 93 passed (new: place categories; a café point attached to its footprint, with the pill on the wall at the point and details from its node; named at 40 m while an ordinary building is not; hidden when a kiosk blocks 2 m of the name area; hidden beyond 120 m).
 - Dev server, bundled LA at the start pose (heading 38°): "(abeautifullife) Jamaican" (food) and "Crawford Addition" (landmark) show. "The Blue Cube" was selected but hidden, because it would have had to move around the HUD. Facing 218°, nothing shows. No page errors.
+
+## v0.1.29 — name pills: noise budget
+
+- `npm test`: 94 passed (new: strict landmark rule, food limited to 60 m, landmarks to 120 m, at most two specials and one plain name, cuisine and hours formatting).
+- Dev server, bundled LA, ten poses: at most one name on screen at a time. The debounce was confirmed (nothing at 150 ms after arriving; "Pan American Lofts" after it settles). Its card showed five rows (address 253 South Broadway, apartments, built 1897, 5 floors, 26.3 m) with no "More" button. A bug found here and fixed: a pending fade-in never completed once the render loop slept, now handled by a 150 ms timer.

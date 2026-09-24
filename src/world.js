@@ -218,7 +218,11 @@ const LANDMARK_AMENITY = ['townhall','library','theatre','cinema','place_of_wors
 export function placeKind(t) {
   if (!t || !t.name) return null;
   if (FOOD_AMENITY.includes(t.amenity) || FOOD_SHOP.includes(t.shop)) return 'food';
-  if (LANDMARK_AMENITY.includes(t.amenity) || LANDMARK_TOURISM.includes(t.tourism) || (t.historic && t.historic !== 'no') || t.heritage || ['cathedral','church','civic','government','museum','train_station'].includes(t.building)) return 'landmark';
+  // Landmarks are kept strict: an explicit public-venue category, or a historic/heritage tag that is also notable enough
+  // to have a Wikipedia or Wikidata entry. Downtown historic districts tag dozens of ordinary buildings historic=yes.
+  const notable = !!(t.wikidata || t.wikipedia);
+  if (LANDMARK_AMENITY.includes(t.amenity) || LANDMARK_TOURISM.includes(t.tourism) || ['cathedral','church','museum','train_station'].includes(t.building)) return 'landmark';
+  if (notable && ((t.historic && t.historic !== 'no') || t.heritage || ['civic','government'].includes(t.building))) return 'landmark';
   return null;
 }
 export function parseExtras(features, origin = ORIGIN, buildings = []) {

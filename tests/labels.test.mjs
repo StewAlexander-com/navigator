@@ -44,3 +44,16 @@ test('v0.1.28: food places and landmarks are named from afar only when the whole
  const kiosk=box('way/8',20,1,2,2);assert.equal(visibleLabels(a,occluders([cafe,plain,kiosk],0,0),{x:0,y:0,heading:90}).length,0);
  assert.equal(visibleLabels(a,occluders([cafe,plain],-100,0),{x:-100,y:0,heading:90}).length,0,'beyond 120 m');
 });
+test('v0.1.29 noise limits: strict landmarks, food within 60 m, at most two specials and one plain name',async()=>{
+ const {placeKind}=await import('../src/world.js');
+ assert.equal(placeKind({name:'Old Block',historic:'yes'}),null,'historic district filler is not a landmark');
+ assert.equal(placeKind({name:'City Hall',historic:'yes',wikidata:'Q1'}),'landmark');assert.equal(placeKind({name:'Library',amenity:'library'}),'landmark');
+ const cafes=[0,1,2,3].map(k=>box(`way/${10+k}`,40,-40+k*25,20,20,{name:`Cafe ${k}`,kind:'food',frontEdge:3}));
+ const a=namedAnchors(cafes,0,0);let v=visibleLabels(a,occluders(cafes,0,0),{x:0,y:0,heading:90});
+ assert.ok(v.length<=2,`specials ${v.length}`);
+ const far=box('way/20',70,-10,20,20,{name:'Far Cafe',kind:'food',frontEdge:3});assert.equal(visibleLabels(namedAnchors([far],0,0),[],{x:0,y:0,heading:90}).length,0,'food beyond 60 m');
+ const museum=box('way/21',70,-10,20,20,{name:'Museum',kind:'landmark',frontEdge:3});assert.equal(visibleLabels(namedAnchors([museum],0,0),[],{x:0,y:0,heading:90}).length,1,'landmark to 120 m');
+ const two=[box('way/30',10,-10,20,20,{name:'A',frontEdge:3}),box('way/31',-30,-10,20,20,{name:'B',frontEdge:1})];
+ assert.ok(visibleLabels(namedAnchors(two,0,0),occluders(two,0,0),{x:6,y:0,heading:90}).filter(x=>!x.special).length<=1,'one plain name');
+ assert.deepEqual(infoRows({cuisine:'mexican;tacos',opening_hours:'Mo-Fr 08:00-20:00; Sa 09:00-15:00'}).slice(0,2),[['Cuisine','mexican, tacos'],['Hours','Mo-Fr 08:00-20:00 · Sa 09:00-15:00']]);
+});

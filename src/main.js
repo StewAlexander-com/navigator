@@ -75,31 +75,52 @@ const edge={asked:false,stepping:false,rearm:30};
 // sight is a 2D test against nearby footprints); `pills` is a fixed pool of DOM nodes. `info` holds the open pop-up's
 // abort controller and the position it was opened at; its contents are dropped on close.
 const labels={anchors:[],blockers:[],visible:[],pills:[],info:null};
-function syncBuildingPills(){
- labels.visible=ready?visibleLabels(labels.anchors,labels.blockers,player):[];
- const host=$('building-pills');while(labels.pills.length<LABELS.shown+LABELS.special){const el=document.createElement('div');el.className='building-pill';el.hidden=true;el.innerHTML='<span></span><button type="button" aria-label="Building details">i</button>';el.querySelector('button').onclick=()=>openBuilding(el.dataset.info,el.dataset.name);host.append(el);labels.pills.push(el);}
- labels.pills.forEach((el,i)=>{const v=labels.visible[i];if(!v){el.hidden=true;el.dataset.id='';return;}if(el.dataset.id!==v.id||el.dataset.name!==v.name){el.dataset.id=v.id;el.dataset.info=v.infoId||v.id;el.dataset.name=v.name;el.classList.toggle('food',v.special==='food');el.classList.toggle('landmark',v.special==='landmark');el.querySelector('span').textContent=v.name;el.title=v.name;el.querySelector('button').hidden=!v.info;el.classList.toggle('plain',!v.info);}});
+// Noise control for name pills (v0.1.29). Each name keeps its own pill (no swapping text between slots); a new name
+// must stay a candidate for 400 ms before it fades in, and a shown name survives 700 ms of dropping out (a lamppost
+// ray, a turn of the head) before it fades out. Nothing is shown above 7 m/s, and the pick is skipped while the pose
+// has not changed. At most LABELS.special + LABELS.shown pills exist at once.
+const PILL={debounce:400,grace:700,maxSpeed:7};
+labels.slots=new Map();labels.pose=null;
+function pillElement(){const el=document.createElement('div');el.className='building-pill';el.innerHTML='<span></span><button type="button" aria-label="Building details">i</button>';el.querySelector('button').onclick=e=>{e.stopPropagation();openBuilding(el.dataset.info,el.dataset.name,el.querySelector('button'));};$('building-pills').append(el);return el;}
+function syncBuildingPills(force=false){
+ const now=performance.now(),fast=positioning.state.mode==='gps'&&(gps.speed??0)>PILL.maxSpeed;
+ const pose=`${player.x.toFixed(1)},${player.y.toFixed(1)},${Math.round(player.heading/2)},${labels.anchors.length}`;
+ const candidates=!ready||fast?[]:(!force&&pose===labels.pose&&labels.visible)?labels.visible:visibleLabels(labels.anchors,labels.blockers,player);
+ labels.pose=pose;labels.visible=candidates;
+ const seen=new Set();
+ for(const v of candidates){seen.add(v.id);let slot=labels.slots.get(v.id);
+  if(!slot){if(labels.slots.size>=LABELS.shown+LABELS.special+2)continue;slot={el:pillElement(),first:now,shown:false};labels.slots.set(v.id,slot);
+   const el=slot.el;el.dataset.id=v.id;el.dataset.info=v.infoId||v.id;el.dataset.name=v.name;el.querySelector('span').textContent=v.name;el.title=v.name;el.querySelector('button').hidden=!v.info;el.classList.toggle('plain',!v.info);el.classList.toggle('food',v.special==='food');el.classList.toggle('landmark',v.special==='landmark');}
+  slot.v=v;slot.last=now;if(!slot.shown&&now-slot.first>=PILL.debounce)slot.shown=true;}
+ let waiting=false;
+ for(const [id,slot] of labels.slots){if(seen.has(id)){if(!slot.shown)waiting=true;continue;}if(!fast&&now-slot.last<PILL.grace){waiting=true;continue;}slot.el.remove();labels.slots.delete(id);}
+ // The render loop sleeps once the view settles, so pending fade-ins and grace expiries get their own short timer.
+ clearTimeout(labels.timer);labels.timer=waiting?setTimeout(()=>{syncBuildingPills();map.triggerRepaint();},150):0;
+ map.triggerRepaint();
 }
-// Per frame: project each shown pill's wall anchor; off-screen ones hide; the layout resolver keeps them off the HUD and the street pill.
+// Per frame: project each shown pill; off-screen ones fade; the layout resolver keeps plain names off the HUD and the
+// street pill, and a food/landmark name that would have to move or shrink to fit is hidden rather than displaced.
 function placeBuildingPills(project){
  const taken=[...overlays.obstacles,...(overlays.street?[overlays.street.rect]:[])],view={width:innerWidth,height:innerHeight};
- labels.pills.forEach((el,i)=>{const v=labels.visible[i];if(!v){el.hidden=true;return;}const a=project(v.x,v.y,v.z);
-  if(!a.visible||a.x<20||a.x>innerWidth-20||a.y<20||a.y>innerHeight-20){el.hidden=true;return;}el.hidden=false;
-  const w=el.offsetWidth||140,h=el.offsetHeight||34,rect={x:a.x-w/2,y:a.y-h/2,w,h},p=place(rect,taken,view);
-  // A food or landmark name that would have to move or shrink to fit is covered by something: hide it instead.
-  if(v.special&&(p.moved||p.scale<1)){el.hidden=true;return;}
-  el.style.left=a.x+'px';el.style.top=(p.y+h/2)+'px';el.style.scale=p.scale<1?String(p.scale):'';taken.push(placedRect(rect,p));});
+ for(const slot of labels.slots.values()){const {el,v}=slot;let on=slot.shown;
+  const a=on?project(v.x,v.y,v.z):null;if(on&&(!a.visible||a.x<20||a.x>innerWidth-20||a.y<20||a.y>innerHeight-20))on=false;
+  if(on){const w=el.offsetWidth||140,h=el.offsetHeight||34,rect={x:a.x-w/2,y:a.y-h/2,w,h},p=place(rect,taken,view);
+   if(v.special&&(p.moved||p.scale<1))on=false;else{el.style.left=a.x+'px';el.style.top=(p.y+h/2)+'px';el.style.scale=p.scale<1?String(p.scale):'';taken.push(placedRect(rect,p));}}
+  el.classList.toggle('on',on);}
 }
-async function openBuilding(id,name){
- closeBuilding();stop();const controller=new AbortController();labels.info={controller,x:player.x,y:player.y};
+async function openBuilding(id,name,button=null){
+ if(labels.info?.id===id)return;closeBuilding();stop();if(button)button.disabled=true;const controller=new AbortController();labels.info={controller,id,x:player.x,y:player.y,button};
  $('building-title').textContent=name;$('building-info').replaceChildren();$('building-status').textContent='Loading details from OpenStreetMap…';$('building-osm').removeAttribute('href');$('building-dialog').show();
  try{const {tags,url}=await fetchInfo(id,controller.signal);if(labels.info?.controller!==controller)return;$('building-osm').href=url;const rows=infoRows(tags);
   $('building-status').textContent=rows.length?'':'OpenStreetMap has no further details for this building.';
-  $('building-info').replaceChildren(...rows.flatMap(([label,value,href])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;if(href){const a=document.createElement('a');a.href=href;a.target='_blank';a.rel='noopener noreferrer';a.textContent=value;dd.append(a);}else dd.textContent=value;return[dt,dd];}));}
+  // The six most useful rows first; the rest wait behind one "More" tap so the card stays short.
+  const render=list=>list.flatMap(([label,value,href])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;if(href){const a=document.createElement('a');a.href=href;a.target='_blank';a.rel='noopener noreferrer';a.textContent=value;dd.append(a);}else dd.textContent=value;return[dt,dd];});
+  $('building-info').replaceChildren(...render(rows.slice(0,6)));
+  if(rows.length>6){const more=document.createElement('button');more.type='button';more.className='building-more';more.textContent=`More (${rows.length-6})`;more.onclick=()=>{more.remove();$('building-info').append(...render(rows.slice(6)));};$('building-info').after(more);labels.info.more=more;}}
  catch(error){if(error.name!=='AbortError'&&labels.info?.controller===controller)$('building-status').textContent=`Details unavailable: ${error.message}`;}
 }
 // Closing drops everything the pop-up downloaded.
-function closeBuilding(){if(labels.info){labels.info.controller.abort();labels.info=null;}$('building-info').replaceChildren();$('building-status').textContent='';$('building-osm').removeAttribute('href');if($('building-dialog').open)$('building-dialog').close();}
+function closeBuilding(){if(labels.info){labels.info.controller.abort();if(labels.info.button)labels.info.button.disabled=false;labels.info.more?.remove();labels.info=null;}$('building-info').replaceChildren();$('building-status').textContent='';$('building-osm').removeAttribute('href');if($('building-dialog').open)$('building-dialog').close();}
 function locate(){if(!gps.target||positioning.state.mode!=='gps')return;worker.postMessage({type:'locate',id:++indoor.id,x:gps.target[0],y:gps.target[1],origin:area.origin});}
 function showIndoor(){const v=indoor.verdict,show=!!v&&positioning.state.mode==='gps';$('indoor-pill').hidden=!show;if(show){$('indoor-text').textContent=v.text;$('indoor-meta').textContent=`GPS HINT · ${v.level==='likely'?'HIGH':'LOW'} CONFIDENCE · ±${Math.round(v.accuracy)} m`;}scheduleLayout();}
 // Driving-speed position track (alpha-beta filter on receiver timestamps); walking pace returns the raw fix.
@@ -264,7 +285,7 @@ worker.onmessage=({data})=>{
   $('area-name').textContent=explore.active?explore.name:data.radius?'Live area around you':'Downtown Los Angeles';
   $('data-state').textContent=`${data.live?'Live '+data.provider:'Bundled OSM'} · ${data.timestamp?data.timestamp.slice(0,10):data.radius?'this session':'fixed LA area'}${data.radius?` · ${data.radius*2} m square${data.cached?' · reused':''}`:''}`;
  }
- if(data.labels){labels.anchors=data.labels.anchors;labels.blockers=data.labels.blockers;syncBuildingPills();}
+ if(data.labels){labels.anchors=data.labels.anchors;labels.blockers=data.labels.blockers;syncBuildingPills(true);}
  if(data.roads){baseRoads=data.roads;roads=cacheRoads?.length?cacheRoads:baseRoads;worldLayer.setRoads(roads);}
  if(data.geometry)worldLayer.setBuildings({...data.geometry,far:data.far});if(data.extras){worldLayer.setSurfaces(data.extras.surfaces);worldLayer.setTrees(data.extras.trees);metrics.extras={areas:data.extras.areaCount,trees:data.extras.treeCount,mapped:data.extras.mappedTrees};}metrics.stream=data.stream;lastBuild=[data.x,data.y];lastStreamHeading=data.heading;
  if(Math.hypot(player.x-data.x,player.y-data.y)>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
@@ -407,4 +428,4 @@ applyMode();
 if(import.meta.env.DEV)window.navigatorTeleport=(x,y,heading=player.heading)=>{Object.assign(player,{x,y,heading});camera();updateUI();start();};
 window.navigatorDriveLog=()=>({version:1,note:'metres east/north of the first logged fix; t = receiver ms, arrival = delivery ms',entries:driveLog.entries.slice()});
 $('drive-log').onclick=()=>{const blob=new Blob([JSON.stringify(window.navigatorDriveLog(),null,1)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`navigator-sensor-log-${new Date().toISOString().slice(0,19).replace(/:/g,'')}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
-window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},layout:{overlaps:overlays.overlaps,fixedOverlaps:overlays.fixedOverlaps||0,placements:overlays.placements,street:overlays.street,obstacles:overlays.obstacles.length},indoor:{verdict:indoor.verdict,located:indoor.located,misses:indoor.misses,visible:!$('indoor-pill').hidden},progress:{task:progress.task,label:progress.label,bytes:progress.bytes,total:progress.total,fraction:progressFraction(progress),detail:progress.detail,visible:!$('progress').hidden,text:$('progress-meta').textContent},street:street?{...street}:null,limits:LIMITS,labels:{anchors:labels.anchors.length,blockers:labels.blockers.length,visible:labels.visible.map(v=>v.name)},area:{...area},explore:{active:explore.active,name:explore.name,point:explore.point,pending:!!explore.pending},gps:{track:track.state(),target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend,failures:gps.failures,retryMs:gps.retryMs,retryInMs:gps.retryAt===-Infinity?null:Math.max(0,gps.retryAt-performance.now()),prefetch:gps.prefetch,prefetching:gps.prefetching,prefetches:gps.prefetches},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});
+window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},layout:{overlaps:overlays.overlaps,fixedOverlaps:overlays.fixedOverlaps||0,placements:overlays.placements,street:overlays.street,obstacles:overlays.obstacles.length},indoor:{verdict:indoor.verdict,located:indoor.located,misses:indoor.misses,visible:!$('indoor-pill').hidden},progress:{task:progress.task,label:progress.label,bytes:progress.bytes,total:progress.total,fraction:progressFraction(progress),detail:progress.detail,visible:!$('progress').hidden,text:$('progress-meta').textContent},street:street?{...street}:null,limits:LIMITS,labels:{anchors:labels.anchors.length,blockers:labels.blockers.length,visible:(labels.visible||[]).map(v=>v.name),shown:[...labels.slots.values()].filter(s=>s.el.classList.contains('on')).map(s=>s.v.name)},area:{...area},explore:{active:explore.active,name:explore.name,point:explore.point,pending:!!explore.pending},gps:{track:track.state(),target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend,failures:gps.failures,retryMs:gps.retryMs,retryInMs:gps.retryAt===-Infinity?null:Math.max(0,gps.retryAt-performance.now()),prefetch:gps.prefetch,prefetching:gps.prefetching,prefetches:gps.prefetches},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

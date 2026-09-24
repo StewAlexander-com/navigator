@@ -2,7 +2,7 @@
 // ⓘ button appears only when the building's OSM tags carry more than its name. Details are fetched from the OSM API
 // only when ⓘ is tapped and are discarded when the pop-up closes (✕, or 2.5 m of movement).
 import {simplifyRing} from './world.js';
-export const LABELS = Object.freeze({radius: 150, occluderRadius: 130, shown: 2, special: 3, specialDistance: 120, near: 5, nearMax: 7, maxDistance: 120, lift: 5, minLift: 2.4, offset: .6, closeDistance: 2.5, api: 'https://api.openstreetmap.org/api/0.6'});
+export const LABELS = Object.freeze({radius: 150, occluderRadius: 130, shown: 1, special: 2, specialDistance: 120, foodDistance: 60, near: 5, nearMax: 7, maxDistance: 120, lift: 5, minLift: 2.4, offset: .6, closeDistance: 2.5, api: 'https://api.openstreetmap.org/api/0.6'});
 const orient = r => r.reduce((s, a, i) => {const b = r[(i + 1) % r.length]; return s + a[0] * b[1] - b[0] * a[1];}, 0) > 0 ? 1 : -1;
 // The wall that faces the street: of edges at least 4 m long, the one whose midpoint is nearest a non-footway road
 // (within 40 m), computed once per building and cached. Falls back to the longest edge.
@@ -94,7 +94,7 @@ export function visibleLabels(anchors, blockers, {x, y, heading}, shown = LABELS
     // that whole name area is in clear view — its centre and 2 m either side along the wall all have line of sight.
     if (a.special) {
       const dx = a.x - x, dy = a.y - y, d = Math.hypot(dx, dy);
-      if (d > LABELS.specialDistance || dx * fx + dy * fy < 2 || dx * a.nx + dy * a.ny > 0) continue;
+      if (d > (a.special === 'food' ? LABELS.foodDistance : LABELS.specialDistance) || dx * fx + dy * fy < 2 || dx * a.nx + dy * a.ny > 0) continue;
       const tx = -a.ny * 2, ty = a.nx * 2;
       if ([[a.x, a.y], [a.x + tx, a.y + ty], [a.x - tx, a.y - ty]].some(([px, py]) => blocked(a, px, py))) continue;
       far.push({...a, d, near: d});
@@ -117,10 +117,12 @@ export function visibleLabels(anchors, blockers, {x, y, heading}, shown = LABELS
   }
   // Ordinary names only right beside the building: 5 m, widened to 7 m only when nothing is within 5 m.
   const close = near.filter(v => v.near <= LABELS.near), plain = (close.length ? close : near).sort((a, b) => a.near - b.near || a.d - b.d).slice(0, shown);
-  const specials = far.sort((a, b) => a.d - b.d).slice(0, LABELS.special);
+  // Landmarks before food at equal footing, then nearest; never more than LABELS.special.
+  const specials = far.sort((a, b) => (a.special === 'landmark' ? 0 : 1) - (b.special === 'landmark' ? 0 : 1) || a.d - b.d).slice(0, LABELS.special);
   return [...specials, ...plain];
 }
-const LABEL_NAMES = {'addr:housenumber':'Number','addr:housename':'House name','addr:street':'Street','addr:block':'Block','addr:block_number':'Block','addr:city':'City','building':'Building type','building:use':'Use','building:levels':'Floors','height':'Height','start_date':'Built','architect':'Architect','operator':'Operator','amenity':'Amenity','shop':'Shop','office':'Office','tourism':'Tourism','heritage':'Heritage level','denomination':'Denomination','religion':'Religion','opening_hours':'Hours','description':'Description','website':'Website','wikipedia':'Wikipedia','wikidata':'Wikidata'};
+// Card rows in order of usefulness; the card shows six, the rest behind "More".
+const LABEL_NAMES = {'cuisine':'Cuisine','opening_hours':'Hours','website':'Website','amenity':'Amenity','shop':'Shop','tourism':'Tourism','building':'Building type','building:use':'Use','start_date':'Built','building:levels':'Floors','height':'Height','architect':'Architect','heritage':'Heritage level','operator':'Operator','office':'Office','addr:housename':'House name','addr:block':'Block','addr:block_number':'Block','denomination':'Denomination','religion':'Religion','description':'Description','wikipedia':'Wikipedia','wikidata':'Wikidata','addr:housenumber':'Number','addr:street':'Street','addr:city':'City'};
 const pretty = v => String(v).replace(/_/g, ' ');
 // Rows [label, value, href?] for the pop-up, from the element's tags. Address parts are joined.
 export function infoRows(tags) {
@@ -133,7 +135,7 @@ export function infoRows(tags) {
     if (k === 'website') rows.push([label, v, /^https?:\/\//.test(v) ? v : null]);
     else if (k === 'wikipedia') {const [lang, title] = v.includes(':') ? v.split(/:(.+)/) : ['en', v]; rows.push([label, title, `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`]);}
     else if (k === 'wikidata') rows.push([label, v, /^Q\d+$/.test(v) ? `https://www.wikidata.org/wiki/${v}` : null]);
-    else rows.push([label, k === 'height' ? `${pretty(v)} m` : pretty(v)]);
+    else rows.push([label, k === 'height' ? `${pretty(v)} m` : k === 'cuisine' ? v.split(';').map(pretty).join(', ') : k === 'opening_hours' ? v.replace(/;\s*/g, ' · ') : pretty(v)]);
   }
   return rows;
 }

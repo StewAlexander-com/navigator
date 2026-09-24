@@ -25,6 +25,9 @@ export function height(tags, {residential = false, area = Infinity} = {}) {
   const small = residential && area <= 250 && ['yes', 'building', undefined].includes(tags.building) ? 6.5 : null;
   return Math.min(180, Math.max(3, Number.isFinite(explicit) ? explicit : Number.isFinite(levels) ? levels * 3.2 : fallback[tags.building] || small || 12));
 }
+// True when OSM tags carry more than a name (address, type, levels, dates…); read by the building pills' ⓘ button.
+const INFO_TAGS=['addr:housenumber','addr:housename','addr:street','addr:block','addr:block_number','building:levels','height','start_date','architect','operator','website','wikipedia','wikidata','description','amenity','shop','office','tourism','heritage','opening_hours','building:use'];
+const hasInfoTags=t=>INFO_TAGS.some(k=>t[k])||(t.building&&!['yes','building'].includes(t.building));
 const ringArea = points => Math.abs(points.reduce((sum, a, i) => {const b = points[(i + 1) % points.length]; return sum + a[0] * b[1] - b[0] * a[1];}, 0)) / 2;
 export function boundedPosition(x, y) {
   const length = Math.hypot(x, y);
@@ -82,7 +85,7 @@ export function parseWorld(raw, origin = ORIGIN) {
     const landuse=contextLanduse(zones,bounds),nearRoad=landuse?null:nearestRoadClass(bounds,roads);
     const residential=landuse==='residential'||(!landuse&&prior&&residentialRoads.has(nearRoad));
     const h=height(f.properties,{residential,area}),heightDefault=!hasHeightTag(f.properties);
-    buildings.push({rings,bounds,height:h,id:f.id,name:String(f.properties.name||'').slice(0,80),style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior})});
+    buildings.push({rings,bounds,height:h,id:f.id,name:String(f.properties.name||'').slice(0,80),info:hasInfoTags(f.properties),style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior})});
   }
   for(const b of buildings)b.frontEdge=storefrontEdge(b,roads);
   if (!buildings.length) throw new Error('No usable building footprints returned.');

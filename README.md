@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.26 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.27 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,14 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Building name pills (v0.1.27)
+
+Buildings with an OSM `name` show a pill with that name on the wall facing the street. That is the storefront or door edge when known; otherwise the wall of at least 4 m whose midpoint is nearest a non-footway road, computed once per building. The pill sits 0.6 m outside the wall at 45 % of the building's height (2.4–5 m). Unnamed buildings show nothing.
+
+- **Which pills show (kept sparse on purpose):** only buildings you are standing next to. The footprint must be within 5 m, widened to 7 m only when nothing is within 5 m. At most two pills show, the nearest first; they must be in front of the camera, on a wall facing you, with no other footprint in the line of sight. Up close, a pill sits on the point of the street wall nearest where you are looking (4 m ahead), 0.6 m outside it and just below eye level, rather than at the wall's midpoint, which can be far to the side or overhead. Line of sight and distance use simplified footprints within 130 m (12 corners each), sent with each worker rebuild and re-checked every 200 ms. The layout resolver keeps pills off the HUD and the street pill.
+- **The ⓘ button** appears only when the building's tags carry more than its name: address, type other than `yes`, floors, height, start date, architect, operator, website, Wikipedia or Wikidata, and similar. That check is one boolean per building at parse time; no details are kept.
+- **Details on demand:** tapping ⓘ fetches that one element from the OpenStreetMap API (`/api/0.6/way/{id}.json`, a few hundred bytes) and shows it in a non-blocking pop-up with the address joined and safe links (http(s) websites, Wikipedia, Wikidata). Closing with ✕, or moving more than 2.5 m, aborts any pending request and clears the pop-up, so nothing downloaded is retained. The request reveals only that building's OSM id to the OSM API.
 
 ### Walk to the edge, then load the next area (v0.1.26)
 

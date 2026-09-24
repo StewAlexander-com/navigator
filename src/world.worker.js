@@ -1,5 +1,6 @@
 import {parseWorld, parseExtrasRaw, buildSurfaces, nearTrees, LIMITS, BBOX, ORIGIN, toLocal} from './world.js';
 import {LOD} from './chunks.js';
+import {namedAnchors,occluders} from './building-labels.js';
 import {areaAround, areaCovers} from './sensors.js';
 import {createChunkStream} from './chunks.js';
 import {validateSectorGraph} from './sectors.js';
@@ -118,7 +119,7 @@ self.onmessage = async ({data}) => {
       report({phase:'building',bytes,total:null});
     }
     if(!world)throw new Error('Load an area first.');
-    const result=stream.update(data.x||0,data.y||0,data.heading||0),g=result.geometry,f=result.far,e=extras(data.x||0,data.y||0,data.type==='load');if(e)result.extras=e;
+    const result=stream.update(data.x||0,data.y||0,data.heading||0),g=result.geometry,f=result.far,e=extras(data.x||0,data.y||0,data.type==='load');if(e)result.extras=e;result.labels={anchors:namedAnchors(world.buildings,data.x||0,data.y||0,undefined,world.roads),blockers:occluders(world.buildings,data.x||0,data.y||0)};
     self.postMessage({type:'ready',id:data.id,x:data.x||0,y:data.y||0,heading:data.heading||0,...result,areaLoaded:data.type==='load',origin:world.origin,bbox:world.bbox,radius:world.radius,timestamp:world.timestamp,kinds:world.kinds,prior:world.prior,bytes,provider,cached,ms:performance.now()-start,live:data.live||!!data.center},[...(g?[g.position.buffer,g.normal.buffer,g.uv.buffer,g.style.buffer]:[]),...(f?[f.position.buffer,f.normal.buffer,f.uv.buffer,f.style.buffer]:[]),...(e?[e.surfaces.position.buffer,e.surfaces.normal.buffer,e.surfaces.uv.buffer,e.surfaces.style.buffer,e.trees.buffer]:[])]);
   }catch(error){self.postMessage({type:'error',id:data.id,message:error.message,oversized:!!error.oversized,retryMs:error.retryMs||null});}
 };

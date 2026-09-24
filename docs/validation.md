@@ -240,3 +240,9 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 
 - `npm test`: 88 passed (new: clamp at the area edge less the 10 m margin, and edge distance).
 - Dev server, headless Chromium, live network: starting 3 m inside the east edge of the bundled LA box and walking east, the end-of-area dialog opened at x = 405.6 m. Download the next area loaded an 800 m square centred on that point. The player kept its position (now 0, 0 in the new frame), the area was named "Near downtown Los Angeles", and there were no page errors. `window.navigatorTeleport` is a development-only hook and is absent from production builds.
+
+## v0.1.27 — building name pills
+
+- `npm test`: 92 passed (new `tests/labels.test.mjs`: anchors only for named buildings, outside the chosen wall; in-front, facing, distance and occlusion rules; info rows with joined address, skipped generic type and safe links; the exact OSM API URL and rejection of malformed ids).
+- Dev server, headless Chromium, live network, bundled LA at the start pose: 13 named anchors and 22 blockers. Before the 5–7 m rule, "Crawford Addition" showed its pill with ⓘ at about 100 m; tapping ⓘ loaded 145 South Spring Street, Los Angeles; commercial; 10 floors; 59.9 m; built 1948. Moving 3 m closed the pop-up and cleared its rows. No page errors.
+- After the 5–7 m rule: no pills at the LA start pose (on South Spring Street, more than 7 m from any named footprint). Beside Pan American Lofts: its pill shows at 3 m and at about 7 m, and is gone at about 14 m. Unit tests cover 4 m (shown), 6.5 m (shown only because nothing is within 5 m), 10 m (hidden), behind the camera, far along the street, and occlusion.

@@ -6,7 +6,7 @@ import {createPositioning} from './positioning.js';
 import {createSunCheck} from './sun-check.js';
 import {smoothHeading, smoothPosition, headingDelta, areaCovers, edgeRunway, shouldPrefetch, liveSquare, retryDelay, deadReckon, snapDistanceFor, courseWeight, fuseHeading, createTrack, SENSORS} from './sensors.js';
 import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition} from './world.js';
-import {nearestStreet} from './street-label.js';
+import {nearestStreet,streetSegments,labelPoint} from './street-label.js';
 import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import {progressFraction, progressText, updateRate} from './progress.js';
 import {indoorVerdict, INDOOR} from './indoor.js';
@@ -22,7 +22,7 @@ const area={origin:ORIGIN,bbox:BBOX,live:false,radius:null,provider:'Bundled OSM
 // GPS target pose. The render loop eases the player toward `target`; `rawHeading` is the latest compass reading.
 let sunCheck;
 let followCompass=true;
-let street=null,labelPosition=null,labelRoads=null;
+let street=null,labelPosition=null,labelRoads=null,labelSegments=[];
 let roadWorker=null,cacheRoads=null,baseRoads=[],lastRoadPoint=null,roadCacheState={phase:'starting',complete:0,total:0,bytes:0};
 let roadCacheEnabled=true;try{roadCacheEnabled=localStorage.getItem('navigator-roads-enabled')!=='false';}catch{}
 // Driving hold: when GPS comes on above ROAD_CACHE.driveSpeed before any GPS-centred plan exists, the 25-mile bulk
@@ -136,9 +136,12 @@ function layoutOverlays(){
  overlays.fixedOverlaps=overlapCount(fixed);overlays.overlaps=overlapCount([...fixed,...visible])-overlays.fixedOverlaps;
 }
 fitView();addEventListener('resize',fitView);
-map.on('load',()=>{worldLayer=createWorldLayer(player,metrics,anchor=>{
- // The street pill follows the chevron each frame but is nudged (or, with no room, shrunk) off other overlays using the cached obstacle rects.
- const pill=$('street-pill');pill.hidden=!anchor.visible||anchor.y-24<innerHeight*.35||anchor.y+24>innerHeight-170;if(pill.hidden)return;
+map.on('load',()=>{worldLayer=createWorldLayer(player,metrics,project=>{
+ // The street pill sits on the current street where the view meets it (labelPoint) and shows whenever that point is on
+ // screen; the layout resolver nudges (or, with no room, shrinks) it off other overlays using the cached obstacle rects.
+ const pill=$('street-pill'),point=street?labelPoint(labelSegments,player):[player.x+Math.sin(player.heading*Math.PI/180)*4.5,player.y+Math.cos(player.heading*Math.PI/180)*4.5,1.65],anchor=point?project(...point):{visible:false};
+ const margin=24;pill.hidden=!anchor.visible||anchor.x<margin||anchor.x>innerWidth-margin||anchor.y<margin||anchor.y>innerHeight-margin;overlays.labelPoint=point;if(pill.hidden){overlays.street=null;return;}
+ anchor.y=Math.min(anchor.y,innerHeight-140);
  const {w,h}=overlays.streetSize,rect={x:anchor.x-w/2,y:anchor.y-h/2,w,h},p=place(rect,overlays.obstacles,{width:innerWidth,height:innerHeight});
  pill.style.left=anchor.x+'px';pill.style.top=(p.y+h/2)+'px';pill.style.scale=p.scale<1?String(p.scale):'';overlays.street={rect:placedRect(rect,p),scale:p.scale};
 });map.addLayer(worldLayer);camera();request();});
@@ -251,7 +254,7 @@ function applyMode(){
 function updateStreetLabel(){
  sendRoadPosition();
  if(labelRoads===roads&&labelPosition&&Math.hypot(player.x-labelPosition.x,player.y-labelPosition.y)<.75)return;
- street=nearestStreet(roads,player,labelRoads===roads?street:null);labelRoads=roads;labelPosition={x:player.x,y:player.y};
+ street=nearestStreet(roads,player,labelRoads===roads?street:null);labelRoads=roads;labelPosition={x:player.x,y:player.y};labelSegments=streetSegments(roads,street,player);
  $('street-kind').textContent=street?.kind||'STREET';$('street-name').textContent=street?.name||'Street not identified';
  $('street-pill').title=street?.name||'Street not identified';
 }

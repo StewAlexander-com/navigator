@@ -221,3 +221,8 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 ## v0.1.22 — tree variety and palm shape
 
 - `npm test`: 84 passed. `tests/trees.html` inspected: three palms at 10, 12 and 15 m with frond crowns, tapered, leaning trunks and distinct crowns; broadleaf and conifer unchanged in cost.
+
+## v0.1.23 — street label follows the street in view
+
+- `npm test`: 85 passed (one new: along, down −20°, up +4°, turned 60°, straight across, facing away 20 m off the street, behind-only and empty input).
+- Preview build, headless Chromium, 1100 × 700: the pill stayed visible and centred for start, pitch −18°, pitch +4°, heading 92° (54° off the street axis) and heading 2°. Before the fix the pitch −18° case was hidden by the fixed band.

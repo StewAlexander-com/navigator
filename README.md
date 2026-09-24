@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.22 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.23 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,17 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Street label follows the street in view (v0.1.23)
+
+Root cause (5 whys):
+1. Why did the name disappear while dragging? The pill was hidden whenever its anchor left a fixed screen band (35 % from the top to 170 px from the bottom).
+2. Why did the anchor leave the band? It was one point 4.5 m ahead of the camera at eye height, and vertical drags pitch the camera by up to −20° / +4°, which moves that point up or down the screen.
+3. Why one point? The pill was built (v0.1.3) to ride the chevron, not the street.
+4. Why hide instead of move? The band predates the overlay layout resolver (v0.1.17) and was the only overlap protection at the time.
+5. Why did it not follow the street when turning? The label knew which street you are on, but not where that street is on screen. Nothing mapped the street's geometry into the view.
+
+Fix: `labelPoint` in `src/street-label.js` places the pill on the current street itself. It walks the view ray from 1.5 m to where it meets the ground (or 40 m when level or looking up) and takes the farthest point that lies on the street's carriageway. If the view centre is not over the street, it uses the street's nearest point in front of the camera. The pill shows whenever that point is on screen, and the layout resolver keeps it off other overlays. Near points float lower (0.6 m, rising to 2.2 m by about 20 m). Cost: at most 25 ray samples against the current street's segments within 120 m, per rendered frame, with no allocation beyond the result.
 
 ### Tree variety and palm shape (v0.1.22)
 

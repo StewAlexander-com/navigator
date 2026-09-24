@@ -253,9 +253,9 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
       projection.fromArray(args.defaultProjectionData.mainMatrix);
       camera.projectionMatrix.copy(projection).multiply(localMatrix);
       if(onChevronAnchor){
-        // Center the pill at the camera’s 1.65 m eye level, independently of the lower chevron.
-        anchor.set(chevron.group.position.x,chevron.group.position.y,1.65,1).applyMatrix4(camera.projectionMatrix);
-        onChevronAnchor({x:(anchor.x/anchor.w+1)*map.getCanvas().clientWidth/2,y:(1-anchor.y/anchor.w)*map.getCanvas().clientHeight/2,visible:anchor.w>0&&Math.abs(anchor.x)<anchor.w&&Math.abs(anchor.y)<anchor.w});
+        // The caller picks a world point (the street label's spot); this projects it with the frame's own camera.
+        const canvas=map.getCanvas();
+        onChevronAnchor((x,y,z)=>{anchor.set(x,y,z,1).applyMatrix4(camera.projectionMatrix);return {x:(anchor.x/anchor.w+1)*canvas.clientWidth/2,y:(1-anchor.y/anchor.w)*canvas.clientHeight/2,visible:anchor.w>0&&Math.abs(anchor.x)<anchor.w&&Math.abs(anchor.y)<anchor.w};});
       }
       renderer.resetState();renderer.render(scene,camera);
       metrics.drawCalls=renderer.info.render.calls;metrics.triangles=renderer.info.render.triangles;metrics.renderedFrames++;

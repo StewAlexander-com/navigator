@@ -2,6 +2,8 @@
 
 A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.17 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
+[![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
+
 - Live app: https://stewalexander-com.github.io/navigator/
 - Architecture: https://stewalexander-com.github.io/navigator/architecture.html
 - Local: `npm ci`, `npm run dev`, open the printed URL at `/navigator/`.

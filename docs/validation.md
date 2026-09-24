@@ -207,3 +207,9 @@ Recorded 2026-09-24 on Linux (sandbox, Node 20, headless Chromium with software 
 - `npm test`: 84 passed, 0 failed (82 before). New `tests/extras.test.mjs`: surface classification and ordering (underground parking excluded), mapped trees first with tagged height, tree-row spacing, illustrative park trees bounded per area, deterministic and never inside a footprint, surfaces below the road plane, nearest-tree cap; bundled LA extras within budget and parsed in under 500 ms; South Spring Street parsed as one-way and at least one two-way 14 m road.
 - Preview build: 10 world draw calls, 26 surfaces / 624 vertices, 33 trees drawn from 607 (258 mapped), no page errors. Screenshots inspected: dashed white divider on one-way South Spring Street, double yellow on the two-way cross street, OSM trees at the end of the block.
 - Browser checks' draw-call expectations updated from 8 to 10. The timing-dependent browser checks were not re-run to completion here, for the same software-GL reason as v0.1.18.
+
+## v0.1.20 — road flicker fix and tree polish
+
+Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
+
+- `npm test`: 84 passed, 0 failed. Preview build: 11 world draw calls, 33 trees drawn, no page or shader errors. Screenshots inspected: OSM-tagged palms on South Spring Street render as palms; road edges and markings have no z-fighting in stills. The flicker was seen while moving on a real device, which I could not reproduce here, so it needs confirming there.

@@ -13,7 +13,7 @@ await fs.mkdir('test-results',{recursive:true});
 await page.screenshot({path:'test-results/desktop.png'});
 await page.keyboard.down('KeyW');await page.waitForTimeout(5000);
 const moving=await page.evaluate(()=>window.navigatorDiagnostics());
-await page.keyboard.up('KeyW');assert.ok(Math.hypot(moving.player.x,moving.player.y)>10);assert.equal(moving.metrics.drawCalls,10);
+await page.keyboard.up('KeyW');assert.ok(Math.hypot(moving.player.x,moving.player.y)>10);assert.equal(moving.metrics.drawCalls,11);
 // The startup progress strip has gone once the bundled area is ready.
 assert.equal(moving.progress.visible,false);assert.equal(moving.progress.task,null);assert.equal(await page.locator('#progress').isVisible(),false);
 await page.mouse.move(600,400);await page.mouse.down();await page.mouse.move(700,400);await page.mouse.up();
@@ -50,7 +50,7 @@ assert.equal(await gpsPage.locator('#position-label').innerText(),'GPS POSITION 
 // Walk 33 m north in one fix (after 2.5 s, a plausible pace): position must ease to the target and the chevron must show the northbound course.
 await gpsPage.waitForTimeout(2500);await gpsContext.setGeolocation({latitude:HOME.latitude+.0003,longitude:HOME.longitude,accuracy:8});
 const easeStart=Date.now();await gpsPage.waitForFunction(()=>window.navigatorDiagnostics().player.y>30,null,{timeout:10000});const easeMs=Date.now()-easeStart;
-d=await diag(gpsPage);assert.ok(Math.abs(d.player.travelBearing)<1,`course ${d.player.travelBearing}`);assert.equal(d.metrics.drawCalls,10);assert.ok(d.metrics.fps>0);
+d=await diag(gpsPage);assert.ok(Math.abs(d.player.travelBearing)<1,`course ${d.player.travelBearing}`);assert.equal(d.metrics.drawCalls,11);assert.ok(d.metrics.fps>0);
 // Compass: device upright (beta 90) with alpha 270 faces east. Dragging temporarily looks around, then returns to the compass heading.
 await gpsPage.evaluate(()=>window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute',{alpha:270,beta:90,gamma:0,absolute:true})));
 await gpsPage.waitForFunction(()=>Math.abs(window.navigatorDiagnostics().player.heading-90)<.5,null,{timeout:5000});
@@ -176,7 +176,7 @@ await mebanePage.setViewportSize({width:1440,height:900});await mebanePage.waitF
 for(let i=0;i<2;i++){await mebanePage.evaluate(c=>window.__fix(c),{...HOUSE,accuracy:40,speed:0,heading:null});await mebanePage.waitForTimeout(400);}
 await mebanePage.waitForFunction(()=>window.navigatorDiagnostics().indoor.verdict===null,null,{timeout:5000});assert.equal(await mebanePage.locator('#indoor-pill').isVisible(),false);assert.equal((await diag(mebanePage)).indoor.located.id,'way/1179878853');assert.equal(mb.area.provider,'Overpass');assert.equal(mb.area.radius,400);assert.equal(mb.area.prior,true);
 assert.equal(mb.area.kinds.reduce((a,b)=>a+b,0),153);assert.ok(mb.area.kinds[1]>=120,`homes ${mb.area.kinds}`);assert.equal(mb.area.kinds[4],0);assert.equal(mb.area.kinds[6],5);
-assert.ok(mb.metrics.buildings>=20,`buildings ${mb.metrics.buildings}`);assert.equal(mb.metrics.drawCalls,10);assert.ok(mb.metrics.vertices<=90000);assert.ok(mb.metrics.fps===null||mb.metrics.fps>0);
+assert.ok(mb.metrics.buildings>=20,`buildings ${mb.metrics.buildings}`);assert.equal(mb.metrics.drawCalls,11);assert.ok(mb.metrics.vertices<=90000);assert.ok(mb.metrics.fps===null||mb.metrics.fps>0);
 await mebanePage.evaluate(()=>{document.getElementById('notice-text').textContent='';});await mebanePage.screenshot({path:'test-results/mebane.png'});
 // Drive north out of Elizabeth Lane at 27 m/s for 12 s: every fix accepted, no per-frame step above 10 m, nothing backwards.
 await mebanePage.evaluate(lat=>{window.__probe=[];const M=111319.49;(function sample(){const d=window.navigatorDiagnostics();window.__probe.push([performance.now(),d.player.y+(d.area.origin[1]-lat)*M]);requestAnimationFrame(sample);})();},MEBANE.latitude);

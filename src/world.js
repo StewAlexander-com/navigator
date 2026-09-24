@@ -177,25 +177,34 @@ export function buildImpostors(world, budget = {vertices: 3000, buildings: 64}, 
 // 1 grass/park/garden/pitch, 2 wood/scrub, 3 water, 4 parking, 5 plaza/pedestrian area. Codes 0 and 6 are asphalt
 // roads and footways. Trees: OSM natural=tree nodes, natural=tree_row every 8 m, and — illustrative, like windows —
 // a jittered 14 m grid (9 m in woods) inside parks, gardens, cemeteries, recreation grounds and woods, never inside
-// a building footprint. Each tree is [x, y, height, crown radius, mapped (1) or illustrative (0)].
+// a building footprint. Each tree is [x, y, height, crown radius, mapped (1) or illustrative (0), shape].
+// Shape from OSM species/genus/leaf_type: 0 broadleaf, 1 conifer, 2 palm. Untagged trees are broadleaf.
 export const EXTRAS = Object.freeze({areas: 600, areaPoints: 400, trees: 2500, perArea: 80, spacing: 14, woodSpacing: 9, rowSpacing: 8, treeHeight: 8});
 const SURFACE = [[1, p => ['park','garden','playground','pitch','dog_park'].includes(p.leisure) || ['grass','recreation_ground','cemetery','meadow','village_green','flowerbed'].includes(p.landuse) || p.natural === 'grassland'],
   [2, p => p.landuse === 'forest' || ['wood','scrub'].includes(p.natural)], [3, p => p.natural === 'water'], [4, p => p.amenity === 'parking' && !['underground','multi-storey','rooftop'].includes(p.parking)],
   [5, p => p.place === 'square' || (p.highway === 'pedestrian' && p.area === 'yes')]];
 const PLANTED = p => ['park','garden','dog_park'].includes(p.leisure) || ['recreation_ground','cemetery','village_green'].includes(p.landuse);
+const PALM = /palm|washingtonia|phoenix|syagrus|arecaceae|trachycarpus|roystonea|cocos/i, CONIFER = /pinus|picea|abies|cedrus|cupressus|juniperus|sequoia|pseudotsuga|araucaria|taxus|pine|spruce|fir\b|cedar|cypress/i;
+export function treeShape(p) {
+  const name = [p.species, p['species:en'], p.genus, p.taxon].filter(Boolean).join(' ');
+  if (PALM.test(name) || p.leaf_type === 'palm') return 2;
+  if (p.leaf_type === 'needleleaved' || CONIFER.test(name)) return 1;
+  return 0;
+}
+const SHAPE_SIZE = [[8, .32], [10, .22], [12, .2]];
 const hash = (x, y) => {const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453; return s - Math.floor(s);};
 function inRing(r, x, y) {let inside = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) {const a = r[j], b = r[i]; if ((a[1] > y) !== (b[1] > y) && x < (b[0]-a[0]) * (y-a[1]) / (b[1]-a[1]) + a[0]) inside = !inside;} return inside;}
 const inRings = (rings, x, y) => inRing(rings[0], x, y) && !rings.slice(1).some(r => inRing(r, x, y));
 export function parseExtras(features, origin = ORIGIN, buildings = []) {
   const areas = [], trees = [], local = p => toLocal(p, origin);
   const insideBuilding = (x, y) => buildings.some(b => x >= b.bounds[0] && x <= b.bounds[2] && y >= b.bounds[1] && y <= b.bounds[3] && inRings(b.rings, x, y));
-  const treeHeight = p => {const h = parseFloat(p.height); return Number.isFinite(h) && h > 2 && h < 40 ? h : EXTRAS.treeHeight;};
+  const treeHeight = (p, shape = 0) => {const h = parseFloat(p.height); return Number.isFinite(h) && h > 2 && h < 40 ? h : SHAPE_SIZE[shape][0];};
   for (const f of features) {
     const p = f.properties || {}, g = f.geometry; if (!g) continue;
-    if (p.natural === 'tree' && g.type === 'Point') {const [x, y] = local(g.coordinates), h = treeHeight(p); trees.push([x, y, h, h * .32, 1]); continue;}
+    if (p.natural === 'tree' && g.type === 'Point') {const [x, y] = local(g.coordinates), shape = treeShape(p), h = treeHeight(p, shape); trees.push([x, y, h, h * SHAPE_SIZE[shape][1], 1, shape]); continue;}
     if (p.natural === 'tree_row' && g.type === 'LineString') {
-      const pts = g.coordinates.map(local), h = treeHeight(p);
-      for (let i = 1; i < pts.length; i++) {const [a, b] = [pts[i-1], pts[i]], l = Math.hypot(b[0]-a[0], b[1]-a[1]); for (let s = 0; s < l; s += EXTRAS.rowSpacing) trees.push([a[0] + (b[0]-a[0]) * s / l, a[1] + (b[1]-a[1]) * s / l, h, h * .32, 1]);}
+      const pts = g.coordinates.map(local), shape = treeShape(p), h = treeHeight(p, shape);
+      for (let i = 1; i < pts.length; i++) {const [a, b] = [pts[i-1], pts[i]], l = Math.hypot(b[0]-a[0], b[1]-a[1]); for (let s = 0; s < l; s += EXTRAS.rowSpacing) trees.push([a[0] + (b[0]-a[0]) * s / l, a[1] + (b[1]-a[1]) * s / l, h, h * SHAPE_SIZE[shape][1], 1, shape]);}
       continue;
     }
     const code = SURFACE.find(([, test]) => test(p))?.[0]; if (!code || areas.length >= EXTRAS.areas) continue;
@@ -206,11 +215,11 @@ export function parseExtras(features, origin = ORIGIN, buildings = []) {
       const pts = rings[0], bounds = [Math.min(...pts.map(q => q[0])), Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[0])), Math.max(...pts.map(q => q[1]))];
       areas.push({code, rings, bounds, id: f.id});
       if (PLANTED(p) || code === 2) {
-        const step = code === 2 ? EXTRAS.woodSpacing : EXTRAS.spacing; let n = 0;
+        const step = code === 2 ? EXTRAS.woodSpacing : EXTRAS.spacing, shape = p.leaf_type === 'needleleaved' ? 1 : 0; let n = 0;
         for (let x = Math.ceil(bounds[0] / step) * step; x < bounds[2] && n < EXTRAS.perArea; x += step) for (let y = Math.ceil(bounds[1] / step) * step; y < bounds[3] && n < EXTRAS.perArea; y += step) {
           const jx = x + (hash(x, y) - .5) * step * .7, jy = y + (hash(y, x) - .5) * step * .7;
           if (!inRings(rings, jx, jy) || insideBuilding(jx, jy)) continue;
-          const h = 6 + hash(jx, jy) * 5; trees.push([jx, jy, h, h * (.28 + hash(jy, jx) * .1), 0]); n++;
+          const h = 6 + hash(jx, jy) * 5; trees.push([jx, jy, h, h * (shape ? .22 : .28 + hash(jy, jx) * .1), 0, shape]); n++;
         }
       }
     }
@@ -234,12 +243,12 @@ export function buildSurfaces(areas, x, y, radius, maxVertices = 30000) {
   const n = pos.length / 3;
   return {position: new Float32Array(pos), normal: new Float32Array(n * 3), uv: new Float32Array(n * 2), style: new Uint8Array(style), count};
 }
-// Nearest trees to (x, y) within `radius`, at most `max`, packed [x, y, h, r] × n.
+// Nearest trees to (x, y) within `radius`, at most `max`, packed [x, y, h, r, shape] × n.
 export function nearTrees(trees, x, y, radius, max = 700) {
   const near = [];
   for (const t of trees) {const d = Math.hypot(t[0] - x, t[1] - y); if (d <= radius) near.push([d, t]);}
   near.sort((a, b) => a[0] - b[0]);
-  const out = new Float32Array(Math.min(max, near.length) * 4);
-  near.slice(0, max).forEach(([, t], i) => out.set([t[0], t[1], t[2], t[3]], i * 4));
+  const out = new Float32Array(Math.min(max, near.length) * 5);
+  near.slice(0, max).forEach(([, t], i) => out.set([t[0], t[1], t[2], t[3], t[5] || 0], i * 5));
   return out;
 }

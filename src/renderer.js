@@ -6,23 +6,42 @@ import {LOD} from './chunks.js';
 export const TREES=Object.freeze({max:700,radius:220});
 // Unit tree (1 m tall, crown radius 1): trunk to 40 % height, crown centred at 62 %. ~78 vertices, shared by every instance.
 function treeModel(){
-  const trunk=new THREE.CylinderGeometry(.07,.10,.45,3,1,true).rotateX(Math.PI/2).translate(0,0,.225),crown=new THREE.IcosahedronGeometry(1,0).scale(1,1,.36).translate(0,0,.62).toNonIndexed();
+  const trunk=new THREE.CylinderGeometry(.07,.10,.45,3,1,true).rotateX(Math.PI/2).translate(0,0,.225),crown=new THREE.IcosahedronGeometry(1,0).scale(1,1,.36).translate(0,0,.62);
   const parts=[trunk.toNonIndexed(),crown],g=new THREE.BufferGeometry();let n=0;for(const p of parts)n+=p.attributes.position.count;
   const pos=new Float32Array(n*3),nor=new Float32Array(n*3),style=new Uint8Array(n*2);let at=0;
   parts.forEach((p,k)=>{p.computeVertexNormals();pos.set(p.attributes.position.array,at*3);nor.set(p.attributes.normal.array,at*3);for(let i=0;i<p.attributes.position.count;i++)style[(at+i)*2]=k+1;at+=p.attributes.position.count;});
   g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nor,3));g.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(n*2),2));g.setAttribute('style',new THREE.BufferAttribute(style,2));return g;
 }
 
-const vertexShader = `attribute vec2 style; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle;
-void main(){local=position;norm=normal;facade=uv;buildingStyle=style;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+const vertexShader = `attribute vec2 style; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height;
+void main(){height=0.;local=position;norm=normal;facade=uv;buildingStyle=style;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
 // Trees: one instanced low-poly model (3-sided trunk, 20-face crown); each instance matrix carries position and size.
-const treeVertexShader = `attribute vec2 style; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle;
-void main(){vec4 w=instanceMatrix*vec4(position,1.);local=w.xyz;norm=normalize(mat3(instanceMatrix)*normal);facade=instanceMatrix[3].xy;buildingStyle=style;gl_Position=projectionMatrix*modelViewMatrix*w;}`;
+// Per-instance shape (0 broadleaf, 1 conifer, 2 palm) morphs one shared unit model in the vertex shader, so three
+// species shapes still cost one draw call. Each instance also gets a yaw, and crown vertices a stable radial jitter
+// (hash of instance position + vertex position; shared corners hash alike, so the crown never cracks).
+const treeVertexShader = `attribute vec2 style; attribute float shape; varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height;
+float h1(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453);}
+void main(){
+ vec3 p=position,n=normal;vec2 id=instanceMatrix[3].xy;float yaw=h1(vec3(id,1.))*6.2832,c=cos(yaw),s=sin(yaw);
+ if(style.x>1.5){
+  vec3 q=p-vec3(0,0,.62);float j=1.+(h1(vec3(id,0.)+floor(position*50.+.5))-.5)*(shape>1.5?.9:.36);q.xy*=j;q.z*=mix(1.,j,.5);
+  vec3 soft=normalize(q*vec3(1,1,2.6));n=normalize(mix(n,soft,.55));
+  if(shape>1.5){q.xy*=1.35;q.z*=.32;q.z-=dot(q.xy,q.xy)*.09;p=vec3(0,0,.93)+q;}
+  else if(shape>.5){float t=clamp((q.z+.36)/.72,0.,1.);p=vec3(q.xy*(1.05-t)*1.25,.12+t*.95);n=normalize(vec3(n.xy,.45));}
+  else p=vec3(0,0,.62)+q;
+ }else if(shape>1.5){p.xy*=.55;p.z*=1.95;}
+ p.xy=mat2(c,s,-s,c)*p.xy;n.xy=mat2(c,s,-s,c)*n.xy;
+ vec4 w=instanceMatrix*vec4(p,1.);local=w.xyz;norm=normalize(mat3(instanceMatrix)*n);facade=id;buildingStyle=vec2(style.x,shape);height=p.z;gl_Position=projectionMatrix*modelViewMatrix*w;}`;
+// Contact shadow: an 8-sided disc per tree, offset away from the art-direction sun and stretched along it.
+const shadowVertexShader = `varying vec2 disc; varying vec3 local;
+void main(){disc=position.xy;vec3 p=position;float r=instanceMatrix[0].x,h=instanceMatrix[2].z;p.xy*=r*1.05;p.x+=.65*h*.18;p.y+=.35*h*.18;p.x*=1.;vec4 w=vec4(instanceMatrix[3].xy+p.xy,.03,1.);local=w.xyz;gl_Position=projectionMatrix*modelViewMatrix*w;}`;
+const shadowFragmentShader = `precision highp float;varying vec2 disc;varying vec3 local;uniform vec2 eye;uniform float radius;
+void main(){float d=distance(local.xy,eye);if(d>radius)discard;float a=(1.-smoothstep(.35,1.,length(disc)))*.34*(1.-smoothstep(radius*.5,radius,d));gl_FragColor=vec4(.08,.07,.05,a);}`;
 // Analytic material cues: no textures, shadow maps, reflection targets or extra passes.
 // The afternoon light is art direction, independent of the measured compass/sun check.
 const fragmentShader = `precision highp float;
 uniform vec2 eye; uniform float radius; uniform float fogRadius; uniform vec2 fade; uniform float kind;
-varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle;
+varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height;
 float grain(vec2 p){vec3 q=fract(vec3(p.xyx)*.1031);q+=dot(q,q.yzx+33.33);return fract((q.x+q.y)*q.z);}
 void main(){
  float d=distance(local.xy,eye);if(d>radius)discard;
@@ -96,10 +115,17 @@ void main(){
    color=vec3(.64,.54,.40);
    vec2 tile=abs(fract(local.xy/2.)-.5);color*=1.-.10*step(.48,max(tile.x,tile.y));
  }else if(kind>3.5){
-   // Trees: brown trunk, crown green varied per instance (hash of its position) and lit like the buildings.
+   // Trees: trunk darker at the base; crown lit, darker underneath (self-shadow), lighter at the top, tinted per
+   // instance and broken up by a 0.4 m leaf-clump grain. Palms are yellower, conifers bluer and darker.
    vec3 n=normalize(norm);float light=max(dot(n,sun),0.);float h=fract(sin(dot(facade,vec2(12.9898,78.233)))*43758.5453);
-   color=buildingStyle.x<1.5?vec3(.36,.28,.21)*(.7+.4*light):mix(vec3(.25,.37,.19),vec3(.36,.44,.22),h)*(.62+.5*light);
-   color*=1.-.10*(grain(floor(local.xy*3.+local.z*5.))-.5);
+   if(buildingStyle.x<1.5)color=mix(vec3(.24,.19,.15),vec3(.42,.34,.26),smoothstep(0.,.35,height))*(.72+.4*light)*(buildingStyle.y>1.5?1.25:1.);
+   else{
+    vec3 leaf=buildingStyle.y>1.5?mix(vec3(.36,.44,.20),vec3(.46,.50,.24),h):buildingStyle.y>.5?mix(vec3(.16,.28,.18),vec3(.22,.34,.21),h):mix(vec3(.23,.35,.17),vec3(.37,.46,.22),h);
+    float under=smoothstep(-.6,.5,n.z);
+    color=leaf*(.48+.62*light)*mix(.72,1.08,under);
+    color*=1.+(grain(floor(local.xyz.xy*2.5+local.z*2.5))-.5)*.22;
+    color+=vec3(.10,.09,.04)*pow(light,3.)*under;
+   }
  }else{
    // Style x: 0 two-way road, 7 one-way road, 8 road of unknown direction, 6 footway, 1 grass, 2 wood, 3 water, 4 parking, 5 plaza. Style y: road width × 10.
    float surf=buildingStyle.x,width=buildingStyle.y*.1;
@@ -118,10 +144,12 @@ void main(){
     // OSM ways at junctions would paint them across the carriageway. No geometry is added.
     if(width>9.5&&(surf<.5||(surf>6.5&&surf<7.5))){
      float across=facade.y*width*.5,paint=1.-smoothstep(40.,90.,d);
-     if(surf<.5){float centre=step(.08,abs(across))*step(abs(across),.2);color=mix(color,vec3(.80,.66,.25),centre*paint*.85);}
-     else{float lane=step(abs(across),.07)*step(fract(facade.x/9.),.33);color=mix(color,vec3(.86,.86,.82),lane*paint*.75);}
+     // Antialiased with the screen-space footprint; lines thinner than a pixel fade instead of shimmering.
+     float a=abs(across),aa=max(fwidth(across),1e-4),thin=clamp(.12/aa,0.,1.);
+     if(surf<.5){float centre=smoothstep(.08-aa,.08+aa,a)*(1.-smoothstep(.2-aa,.2+aa,a));color=mix(color,vec3(.80,.66,.25),centre*paint*thin*.85);}
+     else{float fa=max(fwidth(facade.x/9.),1e-4),dash=smoothstep(0.,fa,fract(facade.x/9.))*(1.-smoothstep(.33-fa,.33+fa,fract(facade.x/9.)));float lane=1.-smoothstep(.07-aa,.07+aa,a);color=mix(color,vec3(.86,.86,.82),lane*dash*paint*thin*.75);}
     }
-    if(surf>5.5&&surf<6.5)color*=1.-.10*step(.94,fract(facade.x/1.5));
+    if(surf>5.5&&surf<6.5){float f=fract(facade.x/1.5),fw=max(fwidth(facade.x/1.5),1e-4);color*=1.-.10*smoothstep(.94-fw,.94+fw,f)*(1.-smoothstep(.3,.9,fw*8.));}
    }else if(surf<1.5){color=vec3(.41,.50,.28)*(1.+(grain(floor(local.xy*2.))-.5)*.14);}
    else if(surf<2.5){color=vec3(.29,.38,.22)*(1.+(grain(floor(local.xy*1.5))-.5)*.2);}
    else if(surf<3.5){vec3 reflected=reflect(-view,vec3(0,0,1));color=mix(vec3(.19,.30,.34),vec3(.58,.70,.76),smoothstep(-.1,.5,reflected.z)*.55+grazing*.35);color+=vec3(.85,.70,.45)*pow(max(dot(reflected,sun),0.),40.);}
@@ -133,7 +161,7 @@ void main(){
  gl_FragColor=vec4(mix(color,fog,haze*.94),1.);
 }`;
 export function createWorldLayer(player, metrics, onChevronAnchor=null) {
-  let renderer, scene, camera, building, far, ground, roads, surfaces, trees, map, chevron;
+  let renderer, scene, camera, building, far, ground, roads, surfaces, trees, shadows, map, chevron;
   const anchor=new THREE.Vector4();
   const eye=new THREE.Vector2(), projection=new THREE.Matrix4(), localMatrix=new THREE.Matrix4();
   // Local metres → Mercator. Re-anchoring a GPS area moves the origin; geometry arrives already relative to it.
@@ -142,13 +170,17 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
   // Buildings, silhouettes and ground are cut off at the far LOD radius; roads keep 180 m. One fog curve spans all of them.
   const fade=new THREE.Vector2(...LOD.fade);
   // Materials: 0 buildings, 1 ground, 2 roads (180 m), 3 silhouettes, 4 surfaces (road shader, far radius), 5 trees.
-  const materials=[0,1,2,3,2,4].map((kind,i)=>new THREE.ShaderMaterial({vertexShader:kind===4?treeVertexShader:vertexShader,fragmentShader,uniforms:{eye:{value:eye},radius:{value:i===2?LIMITS.radius:i===5?TREES.radius:LOD.far},fogRadius:{value:LOD.far},fade:{value:fade},kind:{value:kind}},side:kind===4?THREE.FrontSide:THREE.DoubleSide,defaultAttributeValues:{style:[0,32]}}));
+  const materials=[0,1,2,3,2,4].map((kind,i)=>new THREE.ShaderMaterial({vertexShader:kind===4?treeVertexShader:vertexShader,fragmentShader,uniforms:{eye:{value:eye},radius:{value:i===2?LIMITS.radius:i===5?TREES.radius:LOD.far},fogRadius:{value:LOD.far},fade:{value:fade},kind:{value:kind}},side:kind===4?THREE.FrontSide:THREE.DoubleSide,defaultAttributeValues:{style:[0,32],shape:[0]}}));
+  // Flat layers (ground, surfaces, roads) are drawn first, in order, without depth: painter's order replaces the
+  // millimetre z offsets that flickered at distance. Buildings, trees and the chevron then depth-test normally over them.
+  for(const i of [1,2,4]){materials[i].depthTest=false;materials[i].depthWrite=false;}
+  const shadowMaterial=new THREE.ShaderMaterial({vertexShader:shadowVertexShader,fragmentShader:shadowFragmentShader,uniforms:{eye:{value:eye},radius:{value:TREES.radius}},transparent:true,depthWrite:false});
   function geometry(data){const g=new THREE.BufferGeometry();for(const [key,size] of [['position',3],['normal',3],['uv',2]])g.setAttribute(key,new THREE.BufferAttribute(data[key],size));g.setAttribute('style',new THREE.BufferAttribute(data.style||new Uint8Array(data.position.length/3*2),2));return g;}
   const layer={id:'osm-world',type:'custom',renderingMode:'3d',setOrigin,
     onAdd(m,gl){
       map=m;scene=new THREE.Scene();camera=new THREE.Camera();
       renderer=new THREE.WebGLRenderer({canvas:m.getCanvas(),context:gl});renderer.autoClear=false;
-      ground=new THREE.Mesh(new THREE.PlaneGeometry(1200,1200),materials[1]);ground.position.z=-.04;ground.frustumCulled=false;scene.add(ground);
+      ground=new THREE.Mesh(new THREE.PlaneGeometry(1200,1200),materials[1]);ground.position.z=-.04;ground.frustumCulled=false;ground.renderOrder=-3;scene.add(ground);
       chevron=createChevron(player);scene.add(chevron.group);metrics.chevron=chevron.diagnostics();
     },
     setBuildings(data){
@@ -168,7 +200,8 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
       if(roads){scene.remove(roads);roads.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
       // uv = (metres along the road, −1…1 across) and style = (surface, width × 10) let the shader paint markings.
       const p=[],uv=[],st=[];
-      for(const road of data){let along=0;for(let i=1;i<road.points.length;i++){
+      // Footways, then service roads, then carriageways: later triangles paint over earlier ones.
+      for(const road of [...data].sort((a,b)=>a.width-b.width)){let along=0;for(let i=1;i<road.points.length;i++){
         const a=road.points[i-1],b=road.points[i],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);if(len<.01)continue;
         if(p.length/3+6>18000)break;
         const x=-dy/len*road.width/2,y=dx/len*road.width/2,surf=road.width<=2?6:road.oneway===undefined?8:road.oneway?(road.lanes===1?8:7):0,w=Math.min(255,Math.round(road.width*10));
@@ -176,18 +209,22 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
         for(const j of [0,1,2,0,2,3]){p.push(...v[j]);uv.push(...t[j]);st.push(surf,w);}along+=len;
       }}
       const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(p,3));g.setAttribute('normal',new THREE.Float32BufferAttribute(new Float32Array(p.length),3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setAttribute('style',new THREE.BufferAttribute(new Uint8Array(st),2));
-      roads=new THREE.Mesh(g,materials[2]);roads.frustumCulled=false;scene.add(roads);metrics.roadVertices=p.length/3;
+      roads=new THREE.Mesh(g,materials[2]);roads.frustumCulled=false;roads.renderOrder=-1;scene.add(roads);metrics.roadVertices=p.length/3;
     },
     setSurfaces(data){
       if(surfaces){scene.remove(surfaces);surfaces.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
-      surfaces=new THREE.Mesh(geometry(data),materials[4]);surfaces.frustumCulled=false;scene.add(surfaces);metrics.surfaceVertices=data.position.length/3;metrics.surfaces=data.count;map?.triggerRepaint();
+      surfaces=new THREE.Mesh(geometry(data),materials[4]);surfaces.frustumCulled=false;surfaces.renderOrder=-2;scene.add(surfaces);metrics.surfaceVertices=data.position.length/3;metrics.surfaces=data.count;map?.triggerRepaint();
     },
     // `packed` is [x, y, height, crown radius] × n. The instance buffer is allocated once at TREES.max and reused.
     setTrees(packed){
-      if(!trees){trees=new THREE.InstancedMesh(treeModel(),materials[5],TREES.max);trees.frustumCulled=false;scene.add(trees);}
-      const m=new THREE.Matrix4(),n=Math.min(TREES.max,packed.length/4);
-      for(let i=0;i<n;i++){const [x,y,h,r]=packed.subarray(i*4,i*4+4);m.makeScale(r,r,h).setPosition(x,y,0);trees.setMatrixAt(i,m);}
-      trees.count=n;trees.instanceMatrix.needsUpdate=true;metrics.trees=n;map?.triggerRepaint();
+      if(!trees){
+        const model=treeModel();model.setAttribute('shape',new THREE.InstancedBufferAttribute(new Float32Array(TREES.max),1));
+        trees=new THREE.InstancedMesh(model,materials[5],TREES.max);trees.frustumCulled=false;scene.add(trees);
+        const disc=new THREE.CircleGeometry(1,8);shadows=new THREE.InstancedMesh(disc,shadowMaterial,TREES.max);shadows.instanceMatrix=trees.instanceMatrix;shadows.frustumCulled=false;shadows.renderOrder=1;scene.add(shadows);
+      }
+      const m=new THREE.Matrix4(),n=Math.min(TREES.max,packed.length/5),shape=trees.geometry.attributes.shape;
+      for(let i=0;i<n;i++){const [x,y,h,r,k]=packed.subarray(i*5,i*5+5);m.makeScale(r,r,h).setPosition(x,y,0);trees.setMatrixAt(i,m);shape.array[i]=k;}
+      trees.count=shadows.count=n;trees.instanceMatrix.needsUpdate=true;shape.needsUpdate=true;metrics.trees=n;map?.triggerRepaint();
     },
     render(gl,args){
       eye.set(player.x,player.y);
@@ -203,6 +240,6 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
       metrics.drawCalls=renderer.info.render.calls;metrics.triangles=renderer.info.render.triangles;metrics.renderedFrames++;
       metrics.chevron.bearing=player.chevronHeading??player.heading;
     },
-    onRemove(){for(const object of [building,far,ground,roads,surfaces,trees])object?.geometry.dispose();chevron?.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
+    onRemove(){for(const object of [building,far,ground,roads,surfaces,trees,shadows])object?.geometry.dispose();chevron?.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
   };return layer;
 }

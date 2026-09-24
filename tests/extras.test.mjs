@@ -19,7 +19,7 @@ test('surfaces are classified, planted areas get illustrative trees outside buil
  assert.deepEqual(parseExtras(f,undefined,[building]).trees,e.trees);
  const s=buildSurfaces(e.areas,0,0,300);assert.ok(s.count>=3);assert.equal(s.position.length/3*2,s.style.length);assert.ok(s.position.every(Number.isFinite));
  const zs=new Set();for(let i=2;i<s.position.length;i+=3)zs.add(+s.position[i].toFixed(3));assert.ok([...zs].every(z=>z<0),'surfaces sit below the road plane');
- const near=nearTrees(e.trees,0,0,120,10);assert.equal(near.length,40);
+ const near=nearTrees(e.trees,0,0,120,10);assert.equal(near.length,50);
 });
 test('bundled LA extras parse within budget and roads carry one-way tags',()=>{
  const world=parseWorld(JSON.parse(fs.readFileSync(new URL('../public/osm-snapshot.json',import.meta.url))));

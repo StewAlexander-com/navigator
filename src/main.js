@@ -11,6 +11,7 @@ import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import {progressFraction, progressText, updateRate} from './progress.js';
 import {indoorVerdict, INDOOR} from './indoor.js';
 import {place, placedRect, overlapCount} from './layout.js';
+import {parseCoordinates,geocode,formatPoint} from './places.js';
 import './style.css';
 
 const $=id=>document.getElementById(id);
@@ -35,7 +36,7 @@ function showRoadCache(){
 }
 function useRoads(){roads=cacheRoads?.length?cacheRoads:baseRoads;if(worldLayer&&ready)worldLayer.setRoads(roads);labelRoads=null;}
 function sendRoadPosition(force=false){
- if(!roadWorker||!ready)return;const live=positioning.state.mode==='gps'&&!!positioning.state.lastFix,point=live?[positioning.state.lastFix.lng,positioning.state.lastFix.lat]:toLngLat(player.x,player.y,area.origin);
+ if(!roadWorker||!ready)return;if(explore.active&&positioning.state.mode!=='gps')return;const live=positioning.state.mode==='gps'&&!!positioning.state.lastFix,point=live?[positioning.state.lastFix.lng,positioning.state.lastFix.lat]:toLngLat(player.x,player.y,area.origin);
  if(live&&!force&&!roadGpsPlanned){
   const speed=gps.speed??0;if(speed<SENSORS.movingSpeed){roadSlowSince??=performance.now();}else roadSlowSince=null;
   if(!roadHold&&speed>=ROAD_CACHE.driveSpeed){roadHold=true;roadWorker.postMessage({type:'pause'});showRoadCache();return;}
@@ -63,6 +64,9 @@ function startRoadCache(){
 // worker already holds ahead of the car, if any, so the edge swap needs no download.
 // Indoor hint state: the latest verdict and how many fixes in a row had none (hysteresis before hiding the pill).
 const indoor={id:0,verdict:null,misses:0,located:null};
+// Explore a place: a manual (GPS-off) scene anywhere. `pending` is the requested {point, name} until its square loads
+// (point null = back to the bundled LA demo); `active` while an explored square is the current area.
+const explore={active:false,pending:null,name:null,point:null};
 function locate(){if(!gps.target||positioning.state.mode!=='gps')return;worker.postMessage({type:'locate',id:++indoor.id,x:gps.target[0],y:gps.target[1],origin:area.origin});}
 function showIndoor(){const v=indoor.verdict,show=!!v&&positioning.state.mode==='gps';$('indoor-pill').hidden=!show;if(show){$('indoor-text').textContent=v.text;$('indoor-meta').textContent=`GPS HINT · ${v.level==='likely'?'HIGH':'LOW'} CONFIDENCE · ±${Math.round(v.accuracy)} m`;}scheduleLayout();}
 // Driving-speed position track (alpha-beta filter on receiver timestamps); walking pace returns the raw fix.
@@ -144,7 +148,7 @@ map.on('load',()=>{worldLayer=createWorldLayer(player,metrics,project=>{
  anchor.y=Math.min(anchor.y,innerHeight-140);
  const {w,h}=overlays.streetSize,rect={x:anchor.x-w/2,y:anchor.y-h/2,w,h},p=place(rect,overlays.obstacles,{width:innerWidth,height:innerHeight});
  pill.style.left=anchor.x+'px';pill.style.top=(p.y+h/2)+'px';pill.style.scale=p.scale<1?String(p.scale):'';overlays.street={rect:placedRect(rect,p),scale:p.scale};
-});map.addLayer(worldLayer);camera();request();});
+});map.addLayer(worldLayer);camera();if(!startFromUrl())request();});
 map.on('error',e=>{console.error(e.error);notice('The 3D view encountered an error. Reload to try again.');});
 map.getCanvas().addEventListener('webglcontextlost',e=>{e.preventDefault();stop();notice('Graphics context lost. Reload the page to restore this area.');});
 function camera(){const h=player.heading*Math.PI/180,eye=toLngLat(player.x,player.y,area.origin),ahead=toLngLat(player.x+Math.sin(h)*20,player.y+Math.cos(h)*20,area.origin);map.jumpTo(map.calculateCameraOptionsFromTo(eye,1.65,ahead,1.65+Math.tan(player.pitch*Math.PI/180)*20));}
@@ -210,15 +214,18 @@ worker.onmessage=({data})=>{
  }
  if(data.id!==requestId)return;busy=false;$('refresh').disabled=false;endProgress('area');
  if(data.type==='error'){
+  if(explore.pending){const first=!ready;explore.pending=null;$('place-status').textContent=data.message;if(first){notice('That place could not be downloaded. Showing the Los Angeles demo instead.',7000);request();return;}}
   // Exponential backoff with jitter; a Retry-After from the service is never undercut and no second provider is tried on a rate limit.
   gps.failures++;gps.retryMs=retryDelay(gps.failures,data.retryMs);gps.retryAt=performance.now()+gps.retryMs;
   notice(ready?(data.oversized?'This area is too dense for the 8 MiB cap. Nearby streets stay empty beyond the loaded data.':`Area download unavailable. Your current area is still usable; next attempt in ${Math.round(gps.retryMs/1000)} s.`):'Could not load the bundled area. Reload when online.');$('refresh-info').textContent=data.message;return;}
  if(data.areaLoaded){
   gps.failures=0;gps.retryMs=0;gps.retryAt=-Infinity;if(gps.prefetch&&gps.prefetch.bbox.join()===data.bbox.join())gps.prefetch=null;
   if(data.origin.join()!==area.origin.join()||data.bbox.join()!==area.bbox.join())reanchor(data.origin,data.bbox);
+  // An explored place (or the return to LA) starts at the centre of its square, like the demo.
+  if(explore.pending){explore.active=!!explore.pending.point;explore.name=explore.pending.name;explore.point=explore.pending.point;explore.pending=null;Object.assign(player,{x:0,y:0,pitch:0,travelBearing:null,chevronHeading:null});camera();}
   locate();
   area.live=data.live;area.radius=data.radius;area.provider=data.provider;area.cached=!!data.cached;area.kinds=data.kinds||null;area.prior=!!data.prior;metrics.responseBytes=data.bytes;
-  $('area-name').textContent=data.radius?'Live area around you':'Downtown Los Angeles';
+  $('area-name').textContent=explore.active?explore.name:data.radius?'Live area around you':'Downtown Los Angeles';
   $('data-state').textContent=`${data.live?'Live '+data.provider:'Bundled OSM'} · ${data.timestamp?data.timestamp.slice(0,10):data.radius?'this session':'fixed LA area'}${data.radius?` · ${data.radius*2} m square${data.cached?' · reused':''}`:''}`;
  }
  if(data.roads){baseRoads=data.roads;roads=cacheRoads?.length?cacheRoads:baseRoads;worldLayer.setRoads(roads);}
@@ -226,7 +233,7 @@ worker.onmessage=({data})=>{
  if(Math.hypot(player.x-data.x,player.y-data.y)>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  metrics.queryMs=data.ms;
  if(!ready){metrics.firstViewMs=performance.now()-started;ready=true;startRoadCache();showRoadCache();notice('Drag to look. Use the arrows or W A S D to explore, or enable your location.',7000);}
- else if(data.areaLoaded)notice(data.radius?(data.cached?'OpenStreetMap area reused from this session.':`OpenStreetMap area loaded around you (${data.provider}).`):'OpenStreetMap area refreshed for this session.',5000);
+ else if(data.areaLoaded)notice(explore.active&&data.radius?`Exploring ${explore.name}. Use the arrows or W A S D; you can move 120 m from the centre.`:data.radius?(data.cached?'OpenStreetMap area reused from this session.':`OpenStreetMap area loaded around you (${data.provider}).`):'OpenStreetMap area refreshed for this session.',5000);
  updateUI();drawMini();camera();if(positioning.state.mode==='gps')start();
 };
 worker.onerror=()=>{busy=false;$('refresh').disabled=false;endProgress('area');endProgress('prefetch');notice('Map processing failed. Reload to restart the worker.');};
@@ -296,7 +303,7 @@ function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min
 function start(){if(!frameId&&ready){lastTime=performance.now();frameId=requestAnimationFrame(loop);}}
 function stop(){if(drag){const id=drag.id;drag=null;if($('map').hasPointerCapture(id))$('map').releasePointerCapture(id);}keys.clear();if(frameId)cancelAnimationFrame(frameId);frameId=0;document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));metrics.fps=null;}
 const supported=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','ArrowUp','ArrowDown']);
-addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);addEventListener('focus',start);
+addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('place-dialog').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);addEventListener('focus',start);
 document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();positioning.pause();roadWorker?.postMessage({type:'pause'});}else{positioning.resume();if(roadCacheEnabled&&!roadHold)roadWorker?.postMessage({type:'resume'});start();}});
 for(const button of document.querySelectorAll('[data-key]')){button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keys.add(button.dataset.key);button.classList.add('active');start();});button.addEventListener('lostpointercapture',()=>{keys.delete(button.dataset.key);button.classList.remove('active');});}
 // A compass-follow drag temporarily owns the view; release eases back to the latest sensor heading.
@@ -314,11 +321,34 @@ $('reset').onclick=()=>{stop();
 $('view-mode').onclick=()=>{followCompass=!followCompass;applyMode();start();notice(followCompass?'View follows the compass again.':'Free look: drag or use turn buttons. GPS still moves your position.',4000);};
 function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();track.clear();driveLog.origin=null;driveLog.entries.length=0;gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;gps.prefetch=null;indoor.verdict=null;indoor.misses=0;showIndoor();[player.x,player.y]=boundedPosition(player.x,player.y);camera();drawMini();notice('Location off. Manual exploration within 120 m of the loaded area center.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
 $('gps').onclick=toggleGps;$('gps-toggle').onclick=toggleGps;$('gps-cancel').onclick=()=>$('gps-dialog').close();
-$('gps-enable').onclick=()=>{$('gps-dialog').close();followCompass=true;stop();positioning.enable().then(ok=>{if(ok)notice('Waiting for your location…');});};
+$('gps-enable').onclick=()=>{$('gps-dialog').close();explore.active=false;setPlaceUrl(null);followCompass=true;stop();positioning.enable().then(ok=>{if(ok)notice('Waiting for your location…');});};
 $('road-cache-toggle').onclick=()=>{roadCacheEnabled=!roadCacheEnabled;try{localStorage.setItem('navigator-roads-enabled',String(roadCacheEnabled));}catch{}if(roadCacheEnabled)startRoadCache();else roadWorker?.postMessage({type:'pause'});showRoadCache();};
 $('road-cache-area').onclick=()=>{roadCacheEnabled=true;startRoadCache();sendRoadPosition(true);showRoadCache();};
 $('road-cache-clear').onclick=()=>{roadCacheEnabled=false;try{localStorage.setItem('navigator-roads-enabled','false');}catch{}if(!roadWorker)startRoadCache();roadWorker.postMessage({type:'clear'});showRoadCache();};
-$('menu').onclick=()=>{stop();$('guide').showModal();};$('close-guide').onclick=()=>$('guide').close();
+$('menu').onclick=()=>{stop();$('guide').showModal();};
+// Explore a place: coordinates are parsed locally; anything else is looked up with Nominatim. GPS is turned off first,
+// because a live fix would pull the scene back to where you are.
+function setPlaceUrl(point,name){const url=new URL(location.href);if(point){url.searchParams.set('at',`${point[1].toFixed(5)},${point[0].toFixed(5)}`);if(name)url.searchParams.set('name',name);else url.searchParams.delete('name');}else{url.searchParams.delete('at');url.searchParams.delete('name');}history.replaceState(null,'',url);}
+function explorePlace(point,name){
+ if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();track.clear();gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;gps.prefetch=null;indoor.verdict=null;showIndoor();}
+ const label=name||formatPoint(point);
+ if(!request(point?{center:point,radius:LIMITS.area,fix:point}:{}))return false;
+ explore.pending={point,name:label};if(point)beginProgress('area',`Downloading OpenStreetMap around ${label}`);setPlaceUrl(point,name);return true;
+}
+function startFromUrl(){const at=new URL(location.href).searchParams.get('at'),point=at&&parseCoordinates(at);if(!point)return false;return explorePlace(point,new URL(location.href).searchParams.get('name')||null);}
+function openPlace(){$('guide').close();stop();$('place-status').textContent='';$('place-input').value=explore.point?`${explore.point[1].toFixed(5)}, ${explore.point[0].toFixed(5)}`:'';$('place-dialog').showModal();$('place-input').focus();}
+$('place-open').onclick=openPlace;$('guide-place').onclick=openPlace;$('place-cancel').onclick=()=>$('place-dialog').close();
+$('place-form').onsubmit=async e=>{
+ e.preventDefault();const text=$('place-input').value.trim();if(!text){$('place-status').textContent='Type coordinates or a place name.';return;}
+ let point=parseCoordinates(text),name=null;
+ if(!point){$('place-go').disabled=true;$('place-status').textContent='Looking up that place with OpenStreetMap Nominatim…';
+  try{const hit=await geocode(text);if(!hit){$('place-status').textContent='No place found. Try coordinates such as 36.0957, -79.2670.';return;}point=hit.point;name=hit.name;}
+  catch(error){$('place-status').textContent=`Place search is unavailable (${error.message}). Coordinates still work.`;return;}
+  finally{$('place-go').disabled=false;}}
+ if(busy){$('place-status').textContent='An area is still loading. Try again in a moment.';return;}
+ $('place-dialog').close();explorePlace(point,name);
+};
+$('place-la').onclick=()=>{$('place-dialog').close();if(!explore.active&&!area.live){notice('Already showing the Los Angeles demo.',3000);return;}explore.active=false;explorePlace(null,'Downtown Los Angeles');setPlaceUrl(null);};$('close-guide').onclick=()=>$('guide').close();
 $('refresh').onclick=()=>request(area.live&&area.radius?{center:area.origin,radius:area.radius,fresh:true}:{live:true});
 $('stats-toggle').onclick=()=>{const hidden=!$('stats').hidden;$('stats').hidden=hidden;$('stats-toggle').setAttribute('aria-expanded',String(!hidden));updateUI();};
 $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else notice('For a full-screen view on iPhone, use Share → Add to Home Screen.',6000);}catch{notice('Fullscreen is unavailable in this browser.',4000);}};
@@ -329,4 +359,4 @@ applyMode();
 // Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype E.
 window.navigatorDriveLog=()=>({version:1,note:'metres east/north of the first logged fix; t = receiver ms, arrival = delivery ms',entries:driveLog.entries.slice()});
 $('drive-log').onclick=()=>{const blob=new Blob([JSON.stringify(window.navigatorDriveLog(),null,1)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`navigator-sensor-log-${new Date().toISOString().slice(0,19).replace(/:/g,'')}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
-window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},layout:{overlaps:overlays.overlaps,fixedOverlaps:overlays.fixedOverlaps||0,placements:overlays.placements,street:overlays.street,obstacles:overlays.obstacles.length},indoor:{verdict:indoor.verdict,located:indoor.located,misses:indoor.misses,visible:!$('indoor-pill').hidden},progress:{task:progress.task,label:progress.label,bytes:progress.bytes,total:progress.total,fraction:progressFraction(progress),detail:progress.detail,visible:!$('progress').hidden,text:$('progress-meta').textContent},street:street?{...street}:null,limits:LIMITS,area:{...area},gps:{track:track.state(),target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend,failures:gps.failures,retryMs:gps.retryMs,retryInMs:gps.retryAt===-Infinity?null:Math.max(0,gps.retryAt-performance.now()),prefetch:gps.prefetch,prefetching:gps.prefetching,prefetches:gps.prefetches},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});
+window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},layout:{overlaps:overlays.overlaps,fixedOverlaps:overlays.fixedOverlaps||0,placements:overlays.placements,street:overlays.street,obstacles:overlays.obstacles.length},indoor:{verdict:indoor.verdict,located:indoor.located,misses:indoor.misses,visible:!$('indoor-pill').hidden},progress:{task:progress.task,label:progress.label,bytes:progress.bytes,total:progress.total,fraction:progressFraction(progress),detail:progress.detail,visible:!$('progress').hidden,text:$('progress-meta').textContent},street:street?{...street}:null,limits:LIMITS,area:{...area},explore:{active:explore.active,name:explore.name,point:explore.point,pending:!!explore.pending},gps:{track:track.state(),target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend,failures:gps.failures,retryMs:gps.retryMs,retryInMs:gps.retryAt===-Infinity?null:Math.max(0,gps.retryAt-performance.now()),prefetch:gps.prefetch,prefetching:gps.prefetching,prefetches:gps.prefetches},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

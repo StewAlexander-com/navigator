@@ -230,3 +230,8 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 ## v0.1.24 — parking lots
 
 - `npm test`: 85 passed. The extras test now checks that curb strips come last, in whole quads, and that parking uv spans the lot. `tests/scene.html?x=-11.5&y=108.8&h=161` (the user's reported view) inspected level and at −15° pitch: stall rows aligned to the lot, curb edge against the sidewalk, lines fading with distance, no errors.
+
+## v0.1.25 — explore any place
+
+- `npm test`: 87 passed (two new: coordinate parsing, including hemisphere letters, swapped order and bounds; Nominatim first-hit, no-hit and error handling).
+- Preview build, headless Chromium, live network: `36.0957, -79.2670` loaded an 800 m square (Overpass unavailable, OSM API fallback) with 60 buildings and the player at the centre, URL `?at=36.09570,-79.26700`. "Mebane, North Carolina" resolved through Nominatim to 36.09597, −79.26696 with 63 buildings. Back to the Los Angeles demo restored the bundled area and cleared the URL. No page errors.

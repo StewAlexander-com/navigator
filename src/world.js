@@ -85,13 +85,13 @@ export function parseWorld(raw, origin = ORIGIN) {
     const landuse=contextLanduse(zones,bounds),nearRoad=landuse?null:nearestRoadClass(bounds,roads);
     const residential=landuse==='residential'||(!landuse&&prior&&residentialRoads.has(nearRoad));
     const h=height(f.properties,{residential,area}),heightDefault=!hasHeightTag(f.properties);
-    buildings.push({rings,bounds,height:h,id:f.id,name:String(f.properties.name||'').slice(0,80),info:hasInfoTags(f.properties),style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior})});
+    buildings.push({rings,bounds,height:h,id:f.id,name:String(f.properties.name||'').slice(0,80),info:hasInfoTags(f.properties),kind:placeKind(f.properties),style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior})});
   }
   for(const b of buildings)b.frontEdge=storefrontEdge(b,roads);
   if (!buildings.length) throw new Error('No usable building footprints returned.');
   const kinds=BUILDING_STYLES.map(()=>0);for(const b of buildings)kinds[b.style.kind]++;
   const extras = parseExtras(features, origin, buildings);
-  return {buildings, roads, origin, kinds, prior, areas: extras.areas, trees: extras.trees, timestamp: raw.osm3s?.timestamp_osm_base || null};
+  return {buildings, roads, origin, kinds, prior, areas: extras.areas, trees: extras.trees, places: extras.places, timestamp: raw.osm3s?.timestamp_osm_base || null};
 }
 function distanceToBox(b, x, y) {return Math.hypot(Math.max(b[0]-x, 0, x-b[2]), Math.max(b[1]-y, 0, y-b[3]));}
 // Gable over a four-point ring: ridge along the longer axis at `h + 0.29 × short side` (about a 30° pitch), two sloped
@@ -212,13 +212,23 @@ const SHAPE_SIZE = [[8, .32, .35], [10, .22, .3], [13, .13, .4]];
 const hash = (x, y) => {const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453; return s - Math.floor(s);};
 function inRing(r, x, y) {let inside = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) {const a = r[j], b = r[i]; if ((a[1] > y) !== (b[1] > y) && x < (b[0]-a[0]) * (y-a[1]) / (b[1]-a[1]) + a[0]) inside = !inside;} return inside;}
 const inRings = (rings, x, y) => inRing(rings[0], x, y) && !rings.slice(1).some(r => inRing(r, x, y));
+// Places worth naming from further away (v0.1.28): food and drink, and public landmarks. `kind` is 'food' or 'landmark'.
+const FOOD_AMENITY = ['restaurant','cafe','fast_food','bar','pub','food_court','ice_cream','biergarten','marketplace'], FOOD_SHOP = ['bakery','deli','confectionery','coffee','pastry'];
+const LANDMARK_AMENITY = ['townhall','library','theatre','cinema','place_of_worship','courthouse','arts_centre'], LANDMARK_TOURISM = ['museum','attraction','gallery'];
+export function placeKind(t) {
+  if (!t || !t.name) return null;
+  if (FOOD_AMENITY.includes(t.amenity) || FOOD_SHOP.includes(t.shop)) return 'food';
+  if (LANDMARK_AMENITY.includes(t.amenity) || LANDMARK_TOURISM.includes(t.tourism) || (t.historic && t.historic !== 'no') || t.heritage || ['cathedral','church','civic','government','museum','train_station'].includes(t.building)) return 'landmark';
+  return null;
+}
 export function parseExtras(features, origin = ORIGIN, buildings = []) {
-  const areas = [], trees = [], local = p => toLocal(p, origin);
+  const areas = [], trees = [], places = [], local = p => toLocal(p, origin);
   const insideBuilding = (x, y) => buildings.some(b => x >= b.bounds[0] && x <= b.bounds[2] && y >= b.bounds[1] && y <= b.bounds[3] && inRings(b.rings, x, y));
   const treeHeight = (p, shape = 0, x = 0, y = 0) => {const h = parseFloat(p.height); return Number.isFinite(h) && h > 2 && h < 40 ? h : SHAPE_SIZE[shape][0] * (1 + (hash(x * 1.7, y * 2.3) * 2 - 1) * SHAPE_SIZE[shape][2]);};
   const crown = (h, shape, x, y) => h * SHAPE_SIZE[shape][1] * (.85 + .3 * hash(y * 3.1, x * .7));
   for (const f of features) {
     const p = f.properties || {}, g = f.geometry; if (!g) continue;
+    if (g.type === 'Point' && p.natural !== 'tree') {const kind = placeKind(p); if (kind && places.length < 600) {const [x, y] = local(g.coordinates); places.push({x, y, name: String(p.name).slice(0, 80), kind, id: f.id});} continue;}
     if (p.natural === 'tree' && g.type === 'Point') {const [x, y] = local(g.coordinates), shape = treeShape(p), h = treeHeight(p, shape, x, y); trees.push([x, y, h, crown(h, shape, x, y), 1, shape]); continue;}
     if (p.natural === 'tree_row' && g.type === 'LineString') {
       const pts = g.coordinates.map(local), shape = treeShape(p);
@@ -244,7 +254,7 @@ export function parseExtras(features, origin = ORIGIN, buildings = []) {
   }
   // Water and plazas last so they draw over grass they sit in; mapped trees before illustrative ones.
   areas.sort((a, b) => a.code - b.code); trees.sort((a, b) => b[4] - a[4]);
-  return {areas, trees: trees.slice(0, EXTRAS.trees).filter(t => t.every(Number.isFinite))};
+  return {areas, places, trees: trees.slice(0, EXTRAS.trees).filter(t => t.every(Number.isFinite))};
 }
 export function parseExtrasRaw(raw, origin = ORIGIN, buildings = []) {return parseExtras(osmtogeojson(raw, {flatProperties: true}).features, origin, buildings);}
 // Flat triangulated surfaces near (x, y), each at a tiny code-ordered height above the ground plane so overlaps never z-fight.

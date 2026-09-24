@@ -32,3 +32,15 @@ test('fetchInfo asks the OSM API for exactly that element',async()=>{
  assert.equal(url,'https://api.openstreetmap.org/api/0.6/way/123.json');assert.deepEqual(tags,{tags:{name:'X'},url:'https://www.openstreetmap.org/way/123'});
  await assert.rejects(fetchInfo('way/1;drop',undefined,async()=>({})),/Not an OSM element/);
 });
+test('v0.1.28: food places and landmarks are named from afar only when the whole name area is in clear view',async()=>{
+ const {attachPlaces}=await import('../src/building-labels.js');const {placeKind}=await import('../src/world.js');
+ assert.equal(placeKind({amenity:'restaurant',name:'Taco'}),'food');assert.equal(placeKind({tourism:'museum',name:'M'}),'landmark');assert.equal(placeKind({amenity:'restaurant'}),null);assert.equal(placeKind({shop:'clothes',name:'X'}),null);
+ const cafe=box('way/5',40,-10,20,20),plain=box('way/6',40,20,20,20,{name:'Offices'});
+ attachPlaces([cafe,plain],[{x:40.5,y:0,name:'Blue Cafe',kind:'food',id:'node/77'}]);assert.equal(cafe.place.name,'Blue Cafe');
+ const a=namedAnchors([cafe,plain],0,0);const c=a.find(v=>v.name==='Blue Cafe');assert.equal(c.special,'food');assert.equal(c.infoId,'node/77');assert.ok(Math.abs(c.x-39.4)<1e-6,'on the west wall at the point');
+ // 40 m away, looking at it: the café is named, the plain office building is not (outside 5–7 m).
+ assert.deepEqual(visibleLabels(a,occluders([cafe,plain],0,0),{x:0,y:0,heading:90}).map(v=>v.name),['Blue Cafe']);
+ // A kiosk 2 m to one side of the line of sight hides it: part of the name area is obscured.
+ const kiosk=box('way/8',20,1,2,2);assert.equal(visibleLabels(a,occluders([cafe,plain,kiosk],0,0),{x:0,y:0,heading:90}).length,0);
+ assert.equal(visibleLabels(a,occluders([cafe,plain],-100,0),{x:-100,y:0,heading:90}).length,0,'beyond 120 m');
+});

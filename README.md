@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.27 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.28 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,14 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Food places and landmarks named from afar (v0.1.28)
+
+An exception to the 5–7 m rule for places people look for. **Food and drink** covers restaurants, cafés, fast food, bars, pubs, food courts, ice cream, beer gardens, markets, bakeries, delis and coffee shops. **Public landmarks** covers town halls, libraries, theatres, cinemas, places of worship, courthouses, arts centres, museums, attractions, galleries, historic or heritage-listed buildings, and cathedral, church, civic, government, museum and train-station buildings. It applies whether the place is tagged on the building or mapped as a point: a point is attached to the footprint that contains it (or lies within 3 m), one per building with landmarks first, and its pill goes on that building's wall nearest the point, which is usually the entrance.
+
+- **Clear view required:** named from up to 120 m, but only when the name area is fully in clear view. The wall must face you and be in front of the camera, and the line of sight to the pill's centre and to 2 m either side along the wall must not cross another footprint. A name that the layout resolver would have to move or shrink to fit around the HUD is hidden rather than displaced.
+- **At most three** such names show, nearest first, in addition to at most two ordinary names within 5–7 m. Food pills are warm-toned and landmark pills blue, each with a small dot.
+- **Data:** the bundled LA extract gained 243 named places (95 restaurants, 50 fast food, 28 cafés, …), taking `osm-extras.json` from 189 KB to 223 KB. Live squares request the same places in their one Overpass query. Details still load only when ⓘ is tapped.
 
 ### Building name pills (v0.1.27)
 

@@ -246,3 +246,8 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 - `npm test`: 92 passed (new `tests/labels.test.mjs`: anchors only for named buildings, outside the chosen wall; in-front, facing, distance and occlusion rules; info rows with joined address, skipped generic type and safe links; the exact OSM API URL and rejection of malformed ids).
 - Dev server, headless Chromium, live network, bundled LA at the start pose: 13 named anchors and 22 blockers. Before the 5–7 m rule, "Crawford Addition" showed its pill with ⓘ at about 100 m; tapping ⓘ loaded 145 South Spring Street, Los Angeles; commercial; 10 floors; 59.9 m; built 1948. Moving 3 m closed the pop-up and cleared its rows. No page errors.
 - After the 5–7 m rule: no pills at the LA start pose (on South Spring Street, more than 7 m from any named footprint). Beside Pan American Lofts: its pill shows at 3 m and at about 7 m, and is gone at about 14 m. Unit tests cover 4 m (shown), 6.5 m (shown only because nothing is within 5 m), 10 m (hidden), behind the camera, far along the street, and occlusion.
+
+## v0.1.28 — food places and landmarks named from afar
+
+- `npm test`: 93 passed (new: place categories; a café point attached to its footprint, with the pill on the wall at the point and details from its node; named at 40 m while an ordinary building is not; hidden when a kiosk blocks 2 m of the name area; hidden beyond 120 m).
+- Dev server, bundled LA at the start pose (heading 38°): "(abeautifullife) Jamaican" (food) and "Crawford Addition" (landmark) show. "The Blue Cube" was selected but hidden, because it would have had to move around the HUD. Facing 218°, nothing shows. No page errors.

@@ -2,7 +2,7 @@
 // ⓘ button appears only when the building's OSM tags carry more than its name. Details are fetched from the OSM API
 // only when ⓘ is tapped and are discarded when the pop-up closes (✕, or 2.5 m of movement).
 import {simplifyRing} from './world.js';
-export const LABELS = Object.freeze({radius: 150, occluderRadius: 130, shown: 2, near: 5, nearMax: 7, maxDistance: 120, lift: 5, minLift: 2.4, offset: .6, closeDistance: 2.5, api: 'https://api.openstreetmap.org/api/0.6'});
+export const LABELS = Object.freeze({radius: 150, occluderRadius: 130, shown: 2, special: 3, specialDistance: 120, near: 5, nearMax: 7, maxDistance: 120, lift: 5, minLift: 2.4, offset: .6, closeDistance: 2.5, api: 'https://api.openstreetmap.org/api/0.6'});
 const orient = r => r.reduce((s, a, i) => {const b = r[(i + 1) % r.length]; return s + a[0] * b[1] - b[0] * a[1];}, 0) > 0 ? 1 : -1;
 // The wall that faces the street: of edges at least 4 m long, the one whose midpoint is nearest a non-footway road
 // (within 40 m), computed once per building and cached. Falls back to the longest edge.
@@ -20,19 +20,42 @@ export function streetEdge(b, roads) {
   }
   return (b.streetEdge = index >= 0 ? index : li);
 }
+const inRing = (r, x, y) => {let inside = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) {const a = r[j], b = r[i]; if ((a[1] > y) !== (b[1] > y) && x < (b[0]-a[0]) * (y-a[1]) / (b[1]-a[1]) + a[0]) inside = !inside;} return inside;};
+const segDist = (p, q, x, y) => {const dx = q[0]-p[0], dy = q[1]-p[1], l = dx*dx + dy*dy || 1, t = Math.max(0, Math.min(1, ((x-p[0])*dx + (y-p[1])*dy) / l)); return Math.hypot(x-p[0]-t*dx, y-p[1]-t*dy);};
+// Food places and landmarks mapped as points get attached to the footprint that contains them (or lies within 3 m);
+// one per building, landmarks before food. The pill then goes on that building's wall nearest the point.
+export function attachPlaces(buildings, places) {
+  const order = [...places].sort((a, b) => (a.kind === 'landmark' ? 0 : 1) - (b.kind === 'landmark' ? 0 : 1));
+  for (const p of order) {
+    let best = null, bestD = 3;
+    for (const b of buildings) {
+      const [a0, c0, a1, c1] = b.bounds; if (p.x < a0-3 || p.x > a1+3 || p.y < c0-3 || p.y > c1+3 || b.place) continue;
+      const r = b.rings[0];
+      if (inRing(r, p.x, p.y)) {best = b; break;}
+      for (let k = 0; k < r.length; k++) {const d = segDist(r[k], r[(k + 1) % r.length], p.x, p.y); if (d < bestD) {bestD = d; best = b;}}
+    }
+    if (best && !best.place) best.place = p;
+  }
+  return buildings;
+}
 // Anchor on the street-facing wall (the storefront/door edge when known), 0.6 m outside it, at 45 % of the height
 // clamped to 2.4–5 m.
 export function namedAnchors(buildings, x, y, radius = LABELS.radius, roads = []) {
   const out = [];
   for (const b of buildings) {
-    if (!b.name) continue;
+    const special = b.place?.kind || (b.name ? b.kind : null);
+    if (!b.name && !b.place) continue;
     const [a0, c0, a1, c1] = b.bounds;
     if (Math.hypot(Math.max(a0 - x, 0, x - a1), Math.max(c0 - y, 0, y - c1)) > radius) continue;
     const r = b.rings[0]; let i = b.frontEdge ?? -1;
+    if (b.place) {let bd = Infinity; for (let k = 0; k < r.length; k++) {const p = r[k], q = r[(k + 1) % r.length]; if (Math.hypot(q[0]-p[0], q[1]-p[1]) < 3) continue; const d = segDist(p, q, b.place.x, b.place.y); if (d < bd) {bd = d; i = k;}}}
     if (i < 0) i = streetEdge(b, roads);
     const p = r[i], q = r[(i + 1) % r.length], l = Math.hypot(q[0]-p[0], q[1]-p[1]) || 1, s = orient(r);
     const nx = s * (q[1]-p[1]) / l, ny = -s * (q[0]-p[0]) / l;
-    out.push({id: b.id, name: b.name, info: !!b.info, x: (p[0]+q[0]) / 2 + nx * LABELS.offset, y: (p[1]+q[1]) / 2 + ny * LABELS.offset, z: Math.max(LABELS.minLift, Math.min(LABELS.lift, b.height * .45)), nx, ny, wall: [p[0], p[1], q[0], q[1]], height: b.height});
+    // A mapped place sits on its wall where the point is (usually the entrance), not at the wall's midpoint.
+    let mx = (p[0]+q[0]) / 2, my = (p[1]+q[1]) / 2;
+    if (b.place) {const wx = q[0]-p[0], wy = q[1]-p[1], t = Math.max(.1, Math.min(.9, ((b.place.x-p[0])*wx + (b.place.y-p[1])*wy) / (l*l))); mx = p[0] + t*wx; my = p[1] + t*wy;}
+    out.push({id: b.id, infoId: b.place?.id || b.id, special, name: b.place?.name || b.name, info: b.place ? true : !!b.info, x: mx + nx * LABELS.offset, y: my + ny * LABELS.offset, z: Math.max(LABELS.minLift, Math.min(LABELS.lift, b.height * .45)), nx, ny, wall: [p[0], p[1], q[0], q[1]], height: b.height});
   }
   return out;
 }
@@ -64,12 +87,23 @@ const ringDistance = (ring, x, y) => {
 // standing next to — footprint within 5 m, widened to 7 m only when nothing is within 5 — in front of the camera,
 // wall facing you, and not behind another footprint. At most `shown`, nearest first.
 export function visibleLabels(anchors, blockers, {x, y, heading}, shown = LABELS.shown) {
-  const h = heading * Math.PI / 180, fx = Math.sin(h), fy = Math.cos(h), out = [];
+  const h = heading * Math.PI / 180, fx = Math.sin(h), fy = Math.cos(h), near = [], far = [];
+  const blocked = (a, px, py) => blockers.some(o => o.id !== a.id && o.ring.some((p, i) => crosses(x, y, px, py, p, o.ring[(i + 1) % o.ring.length])));
   for (const a of anchors) {
-    const own = blockers.find(o => o.id === a.id), near = own ? ringDistance(own.ring, x, y) : Math.hypot(a.x - x, a.y - y);
-    if (near > LABELS.nearMax) continue;
+    // Food places and landmarks: named from up to 120 m, on their street wall at the wall's own anchor, but only when
+    // that whole name area is in clear view — its centre and 2 m either side along the wall all have line of sight.
+    if (a.special) {
+      const dx = a.x - x, dy = a.y - y, d = Math.hypot(dx, dy);
+      if (d > LABELS.specialDistance || dx * fx + dy * fy < 2 || dx * a.nx + dy * a.ny > 0) continue;
+      const tx = -a.ny * 2, ty = a.nx * 2;
+      if ([[a.x, a.y], [a.x + tx, a.y + ty], [a.x - tx, a.y - ty]].some(([px, py]) => blocked(a, px, py))) continue;
+      far.push({...a, d, near: d});
+      continue;
+    }
+    const own = blockers.find(o => o.id === a.id), dist = own ? ringDistance(own.ring, x, y) : Math.hypot(a.x - x, a.y - y);
+    if (dist > LABELS.nearMax) continue;
     // Up close the wall's midpoint can be far to the side or high overhead, so the pill goes to the point of the street
-    // wall nearest where you are looking (4 m ahead), 0.6 m outside it, a little above eye level.
+    // wall nearest where you are looking (4 m ahead), 0.6 m outside it, a little below eye level.
     let px = a.x, py = a.y, pz = a.z;
     if (a.wall) {
       const [ax, ay, bx, by] = a.wall, wx = bx-ax, wy = by-ay, l = wx*wx + wy*wy || 1, tx = x + fx * 4, ty = y + fy * 4;
@@ -78,12 +112,13 @@ export function visibleLabels(anchors, blockers, {x, y, heading}, shown = LABELS
     }
     const dx = px - x, dy = py - y, d = Math.hypot(dx, dy);
     pz = Math.min(pz, 1.35 + .08 * d, Math.max(2, (a.height || 6) - .5));
-    if (dx * fx + dy * fy < .5 || dx * a.nx + dy * a.ny > 0) continue;
-    if (blockers.some(o => o.id !== a.id && o.ring.some((p, i) => crosses(x, y, px, py, p, o.ring[(i + 1) % o.ring.length])))) continue;
-    out.push({...a, x: px, y: py, z: pz, d, near});
+    if (dx * fx + dy * fy < .5 || dx * a.nx + dy * a.ny > 0 || blocked(a, px, py)) continue;
+    near.push({...a, x: px, y: py, z: pz, d, near: dist});
   }
-  const close = out.filter(v => v.near <= LABELS.near);
-  return (close.length ? close : out).sort((a, b) => a.near - b.near || a.d - b.d).slice(0, shown);
+  // Ordinary names only right beside the building: 5 m, widened to 7 m only when nothing is within 5 m.
+  const close = near.filter(v => v.near <= LABELS.near), plain = (close.length ? close : near).sort((a, b) => a.near - b.near || a.d - b.d).slice(0, shown);
+  const specials = far.sort((a, b) => a.d - b.d).slice(0, LABELS.special);
+  return [...specials, ...plain];
 }
 const LABEL_NAMES = {'addr:housenumber':'Number','addr:housename':'House name','addr:street':'Street','addr:block':'Block','addr:block_number':'Block','addr:city':'City','building':'Building type','building:use':'Use','building:levels':'Floors','height':'Height','start_date':'Built','architect':'Architect','operator':'Operator','amenity':'Amenity','shop':'Shop','office':'Office','tourism':'Tourism','heritage':'Heritage level','denomination':'Denomination','religion':'Religion','opening_hours':'Hours','description':'Description','website':'Website','wikipedia':'Wikipedia','wikidata':'Wikidata'};
 const pretty = v => String(v).replace(/_/g, ' ');

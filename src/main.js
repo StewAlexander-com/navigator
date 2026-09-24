@@ -77,8 +77,8 @@ const edge={asked:false,stepping:false,rearm:30};
 const labels={anchors:[],blockers:[],visible:[],pills:[],info:null};
 function syncBuildingPills(){
  labels.visible=ready?visibleLabels(labels.anchors,labels.blockers,player):[];
- const host=$('building-pills');while(labels.pills.length<LABELS.shown){const el=document.createElement('div');el.className='building-pill';el.hidden=true;el.innerHTML='<span></span><button type="button" aria-label="Building details">i</button>';el.querySelector('button').onclick=()=>openBuilding(el.dataset.id,el.dataset.name);host.append(el);labels.pills.push(el);}
- labels.pills.forEach((el,i)=>{const v=labels.visible[i];if(!v){el.hidden=true;el.dataset.id='';return;}if(el.dataset.id!==v.id){el.dataset.id=v.id;el.dataset.name=v.name;el.querySelector('span').textContent=v.name;el.title=v.name;el.querySelector('button').hidden=!v.info;el.classList.toggle('plain',!v.info);}});
+ const host=$('building-pills');while(labels.pills.length<LABELS.shown+LABELS.special){const el=document.createElement('div');el.className='building-pill';el.hidden=true;el.innerHTML='<span></span><button type="button" aria-label="Building details">i</button>';el.querySelector('button').onclick=()=>openBuilding(el.dataset.info,el.dataset.name);host.append(el);labels.pills.push(el);}
+ labels.pills.forEach((el,i)=>{const v=labels.visible[i];if(!v){el.hidden=true;el.dataset.id='';return;}if(el.dataset.id!==v.id||el.dataset.name!==v.name){el.dataset.id=v.id;el.dataset.info=v.infoId||v.id;el.dataset.name=v.name;el.classList.toggle('food',v.special==='food');el.classList.toggle('landmark',v.special==='landmark');el.querySelector('span').textContent=v.name;el.title=v.name;el.querySelector('button').hidden=!v.info;el.classList.toggle('plain',!v.info);}});
 }
 // Per frame: project each shown pill's wall anchor; off-screen ones hide; the layout resolver keeps them off the HUD and the street pill.
 function placeBuildingPills(project){
@@ -86,6 +86,8 @@ function placeBuildingPills(project){
  labels.pills.forEach((el,i)=>{const v=labels.visible[i];if(!v){el.hidden=true;return;}const a=project(v.x,v.y,v.z);
   if(!a.visible||a.x<20||a.x>innerWidth-20||a.y<20||a.y>innerHeight-20){el.hidden=true;return;}el.hidden=false;
   const w=el.offsetWidth||140,h=el.offsetHeight||34,rect={x:a.x-w/2,y:a.y-h/2,w,h},p=place(rect,taken,view);
+  // A food or landmark name that would have to move or shrink to fit is covered by something: hide it instead.
+  if(v.special&&(p.moved||p.scale<1)){el.hidden=true;return;}
   el.style.left=a.x+'px';el.style.top=(p.y+h/2)+'px';el.style.scale=p.scale<1?String(p.scale):'';taken.push(placedRect(rect,p));});
 }
 async function openBuilding(id,name){

@@ -9,7 +9,7 @@ try{
  const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(base);await page.waitForFunction(()=>window.navigatorDiagnostics?.().ready);
  const pill=page.locator('#street-pill');await pill.waitFor({state:'visible'});
- const demo=await page.evaluate(()=>window.navigatorDiagnostics());assert.ok(demo.street?.name);assert.equal(demo.metrics.drawCalls,7);
+ const demo=await page.evaluate(()=>window.navigatorDiagnostics());assert.ok(demo.street?.name);assert.equal(demo.metrics.drawCalls,8);
  assert.equal(await pill.evaluate(e=>getComputedStyle(e).pointerEvents),'none');assert.equal(await page.locator('#street-name').innerText(),demo.street.name);
  const box=await pill.boundingBox();assert.ok(box.x>0&&box.x+box.width<390);assert.ok(box.height<60);assert.ok(Math.abs(box.y+box.height/2-844/2)<2,'pill centers on the eye-level sightline');
  // A gesture beginning on the label must still reach the map.

@@ -11,7 +11,7 @@ try{
  const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(process.env.NAVIGATOR_URL||'http://127.0.0.1:4173/navigator/');
  await page.waitForFunction(()=>window.navigatorDiagnostics?.().roadCache.complete>=1);
- const first=await page.evaluate(()=>window.navigatorDiagnostics());assert.ok(first.roadCache.bytes>0);assert.equal(first.street.name,'South Spring Street');assert.equal(first.street.kind,'STREET');assert.equal(first.metrics.drawCalls,7);
+ const first=await page.evaluate(()=>window.navigatorDiagnostics());assert.ok(first.roadCache.bytes>0);assert.equal(first.street.name,'South Spring Street');assert.equal(first.street.kind,'STREET');assert.equal(first.metrics.drawCalls,8);
  await page.locator('#menu').click();await page.locator('#road-cache-toggle').click();await page.waitForFunction(()=>window.navigatorDiagnostics().roadCache.phase==='paused');await page.locator('#close-guide').click();
  const installed=await page.evaluate(()=>new Promise((resolve,reject)=>{const r=indexedDB.open('navigator-road-packages');r.onerror=()=>reject(r.error);r.onsuccess=()=>{const db=r.result,q=db.transaction('meta').objectStore('meta').getAll();q.onsuccess=()=>{resolve(q.result);db.close();};};}));assert.ok(installed.length>=1);assert.ok(installed.every(m=>m.hash.length===64));
  await page.screenshot({path:'test-results/road-cache-mobile.png'});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

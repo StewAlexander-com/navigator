@@ -25,6 +25,7 @@ export function createPositioning(handlers) {
     const c = position.coords;
     const fix = {lng: c.longitude, lat: c.latitude, accuracy: c.accuracy, timestamp: position.timestamp, speed: c.speed, heading: c.heading};
     const verdict = evaluateFix(state.lastFix, fix, state.fixes.streak);
+    handlers.onRaw?.(fix, verdict.reason);
     state.accuracy = fix.accuracy;
     if (!verdict.accepted) {state.fixes.rejected++; state.fixes.lastReason = verdict.reason; if (verdict.reason === 'implausible') state.fixes.streak++; if (state.position !== 'on') state.position = 'waiting'; changed(); return;}
     if (state.lastFix) state.fixIntervalMs = fix.timestamp - state.lastFix.timestamp;

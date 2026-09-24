@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.17 · Prototype F** adds an ingest-time street-sector graph for the bundled area and optional GPS free look, retaining bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.18 · Prototype G** adds a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track, retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -85,6 +85,20 @@ Performance reports active/prefetched/resident counts, cache bytes, evictions/pr
 
 Run `npm run test:stream` against production preview on port 4173 for an actual worker/renderer walk with browser-supplied GPS fixes. This verifies promotion, eviction, bounded counts, GPU disposal counters, idle reuse, same-origin requests and desktop/mobile performance layout. See `docs/validation.md` for measured results and physical-device limits.
 
+
+## Level of detail (Prototype G)
+
+Per chunk, not per building, so prepared geometry stays cacheable. Chunks within 120 m (plus the 12 m chunk margin) get full extrusion; a full chunk stays full until 144 m (24 m hysteresis), so walking along the boundary does not flicker. Chunks out to 300 m become silhouette prisms: the outer ring simplified (Visvalingam, corners under 1.5² m² dropped, at most 10 corners), walls and a flat roof, no holes or façade. Heights match the near field; a small gabled home's flat roof sits halfway up its near-field ridge. All silhouettes share one draw call (8 world draw calls, was 7), capped at 900 buildings / 40,000 vertices, 3,000 vertices per chunk.
+
+Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
+
+Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Driving position track (v0.1.18)
+
+Above 20 mph the camera lagged 7–22 m behind the car and could step backwards when fixes arrived late or in pairs, because dead reckoning ran from the moment a fix was *delivered*, not when it was *measured*. `createTrack` in `src/sensors.js` is a constant-velocity alpha-beta filter keyed on receiver timestamps (α 0.35, β 0.08, Doppler speed/course weighted 0.7). It predicts to "now" on the receiver clock using the smallest delivery delay seen in the last eight fixes, and leads by the 0.55 s easing constant to cancel the easing lag. A fix older than the current state is ignored; a gap over 4 s or a residual over 3 × the snap threshold restarts the track. Below 3 m/s it returns the raw fix, so walking is unchanged.
+
+`npm run sim:drive` (60 s drives, 1 Hz, σ 2.5 m, 100–400 ms latency, ±150 ms jitter, 8 % batched deliveries; mean of five seeds): at 20 mph along-track lag −7.19 → −0.99 m, RMS 7.49 → 1.70 m, worst backward frame 0.32 → 0.02 m; at 60 mph lag −21.45 → −2.81 m, RMS 21.87 → 3.83 m. Cross-track p95 rises slightly at speed (3.77 → 3.44 m at 20 mph, 4.13 → 5.79 m at 60 mph) from extrapolating course noise. These are synthetic; real receivers may differ, which is why the Performance panel now has **Download sensor log**: the last 600 fix deliveries (receiver and delivery times, metres from the first fix — no coordinates — accuracy, speed, course, compass, view heading, course blend, track state), held in memory only and exported only on that tap.
 
 ## Street-sector index (Prototype F)
 

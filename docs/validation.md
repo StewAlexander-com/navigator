@@ -190,3 +190,12 @@ Recorded 2026-09-23 in local headless Chromium on macOS. Pills (notice with prog
 - `npm run test:stream`, `test:sun`, `test:street-label`, `test:road-cache`, `test:building-styles`, `test:chevron`: passed.
 
 Limits: movement is vertical within a pill's own column; the resolver does not reflow anchored UI (brand, compass, minimap, bottom bar), whose CSS positions are already collision-free at the tested sizes. A shrunk pill at 60 % remains legible on the tested displays; physical-phone legibility is not verified.
+
+## v0.1.18 — Prototype G level of detail and driving position track
+
+Recorded 2026-09-24 on Linux (sandbox, Node 20, headless Chromium with software GL).
+
+- `npm test`: 82 passed, 0 failed (80 before). New: LOD split on the real LA snapshot within the silhouette caps; hysteresis (full at 131 m and 142 m, released at 146 m, re-entry only below the near boundary); a dense world downgrades over-budget near chunks to silhouettes; ring simplification and a box silhouette (30 vertices, roof at full height); track walking passthrough, stale-fix rejection, latency-corrected prediction, reset on jump, frame shift, and sim bounds at 20/35/60 mph.
+- `npm run sim:drive`: see README "Driving position track" for the table.
+- Bundled LA in the preview build: 8 world draw calls, 12 full / 20 silhouette chunks, 57 silhouette buildings / 3,150 vertices, no page errors; screenshot inspected.
+- Not re-run to completion here: the timing-dependent browser checks (`test:browser`, `test:stream`). Software GL in this sandbox renders about 4 frames per second for both v0.1.17 and v0.1.18, so the walk-distance and timeout assertions fail for both builds. Their draw-call expectations were updated from 7 to 8. Re-run on macOS before treating Prototype G as validated; the real-device fps / memory check over a drive is also outstanding.

@@ -81,6 +81,54 @@ export function deadReckon([x, y], speed, course, elapsed) {
   return [x + Math.sin(r) * d, y + Math.cos(r) * d];
 }
 
+// Driving-speed position track: a constant-velocity alpha-beta filter in local metres, keyed on the receiver's fix
+// timestamps rather than on when the browser happened to deliver the fix. Arrival jitter, batched deliveries (two fixes
+// 50 ms apart after a 2 s gap) and ±3 m position noise no longer move the camera backwards or make it lurch once a second.
+// The receiver's Doppler speed and course, when present, set most of the velocity; the fixes correct position and the
+// rest. `predict` extrapolates to "now" on the receiver's clock (latency = smallest recently observed delivery delay),
+// plus an optional lead that cancels the steady lag of the render-loop easing. Below `movingSpeed` it returns the last
+// fix unchanged, so walking behaviour is identical to the plain target.
+export const TRACK = Object.freeze({
+  alpha: 0.35,       // share of the position residual applied per fix
+  beta: 0.08,        // share of the residual (per second of fix gap) applied to velocity
+  doppler: 0.7,      // weight of the receiver's own speed/course in the velocity estimate
+  resetGap: 4,       // seconds; a longer gap between fix timestamps restarts the track at the fix
+  resetResidual: 3,  // a residual beyond this × the snap threshold restarts the track (a real jump, not noise)
+  latencyWindow: 8   // fixes over which the smallest delivery delay is taken as the latency estimate
+});
+export function createTrack() {
+  let s = null; const delays = [];
+  const velocityFrom = (speed, course) => Number.isFinite(speed) && speed >= 0 && Number.isFinite(course) ? [Math.sin(course * RAD) * speed, Math.cos(course * RAD) * speed] : null;
+  function reset(z, t, measured) {s = {x: z[0], y: z[1], vx: measured?.[0] || 0, vy: measured?.[1] || 0, t, zx: z[0], zy: z[1], speed: 0};}
+  return {
+    // `z` local metres, `t` receiver epoch ms, `arrival` delivery epoch ms. Returns {reset, residual}.
+    update(z, t, {speed = null, course = null, arrival = t, snap = SENSORS.snapDistance} = {}) {
+      delays.push(Math.max(0, arrival - t)); if (delays.length > TRACK.latencyWindow) delays.shift();
+      const measured = velocityFrom(speed, course);
+      if (!s || !Number.isFinite(t) || (t - s.t) / 1000 > TRACK.resetGap) {reset(z, t, measured); s.speed = moving(speed); return {reset: true, residual: 0};}
+      const dt = (t - s.t) / 1000;
+      if (dt <= 0) return {reset: false, residual: 0, stale: true};
+      const px = s.x + s.vx * dt, py = s.y + s.vy * dt, rx = z[0] - px, ry = z[1] - py, residual = Math.hypot(rx, ry);
+      if (residual > TRACK.resetResidual * snap) {reset(z, t, measured); s.speed = moving(speed); return {reset: true, residual};}
+      s.x = px + TRACK.alpha * rx; s.y = py + TRACK.alpha * ry;
+      let vx = s.vx + TRACK.beta / dt * rx, vy = s.vy + TRACK.beta / dt * ry;
+      if (measured) {vx += (measured[0] - vx) * TRACK.doppler; vy += (measured[1] - vy) * TRACK.doppler;}
+      s.vx = vx; s.vy = vy; s.t = t; s.zx = z[0]; s.zy = z[1]; s.speed = Number.isFinite(speed) && speed >= 0 ? speed : Math.hypot(vx, vy);
+      return {reset: false, residual};
+    },
+    // Position to aim for at delivery-clock time `now` (epoch ms), `lead` seconds ahead.
+    predict(now, lead = 0) {
+      if (!s) return null;
+      if (s.speed < SENSORS.movingSpeed) return [s.zx, s.zy];
+      const latency = Math.min(...delays), elapsed = Math.min(Math.max((now - latency - s.t) / 1000, 0), SENSORS.reckonMaxS) + lead;
+      return [s.x + s.vx * elapsed, s.y + s.vy * elapsed];
+    },
+    // Re-express the track in a new local frame (area re-anchor) without losing velocity.
+    shift(dx, dy) {if (s) {s.x += dx; s.y += dy; s.zx += dx; s.zy += dy;}},
+    clear() {s = null; delays.length = 0;},
+    state: () => s && {...s, latency: delays.length ? Math.min(...delays) : null}
+  };
+}
 export const smoothstep = (a, b, v) => {const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t);};
 // Weight of the GPS course in the camera heading: 0 at walking pace, 1 at `fuseSpeed`, and 1 as soon as
 // the platform reports a poor compass while moving (a car body is a magnet; the course is not).

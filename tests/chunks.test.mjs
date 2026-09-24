@@ -31,3 +31,20 @@ test('dense chunks enforce aggregate vertex, building and road budgets',()=>{
 test('a large footprint intersecting the radius is considered even if its owning cell lies outside it',()=>{
  const world={buildings:[{rings:[[[100,-20],[900,-20],[900,20],[100,20]]],bounds:[100,-20,900,20],height:10,id:'long'}],roads:[]};const r=createChunkStream(world).update(0,0);assert.equal(r.geometry.count,1);
 });
+test('Prototype G: near chunks get full extrusion, far chunks silhouettes, with hysteresis and downgrade instead of omission',async()=>{
+ const {LOD}=await import('../src/chunks.js');const {simplifyRing,buildImpostors}=await import('../src/world.js');
+ const r=createChunkStream(real).update(0,0,38);assert.ok(r.stream.lod.near>0&&r.stream.lod.far>0);assert.ok(r.far.count>0&&r.far.position.length/3<=LOD.farVertices&&r.far.count<=LOD.farBuildings);assert.ok(r.far.position.every(Number.isFinite));
+ assert.equal(new Set([...r.stream.activeIds]).size,r.stream.lod.near);
+ // Hysteresis: moving just past the near boundary keeps a full chunk; moving past the hysteresis band releases it.
+ const one={buildings:[{rings:[[[0,0],[20,0],[20,20],[0,20]]],bounds:[0,0,20,20],height:12,id:'a'}],roads:[]},h=createChunkStream(one);
+ assert.equal(h.update(0,-(LOD.near+CHUNKS.margin-1),0).stream.lod.near,1);assert.equal(h.update(0,-(LOD.near+LOD.hysteresis-2),0).stream.lod.near,1);
+ const out=h.update(0,-(LOD.near+LOD.hysteresis+2),0);assert.equal(out.stream.lod.near,0);assert.equal(out.stream.lod.far,1);
+ assert.equal(h.update(0,-(LOD.near+LOD.hysteresis-2),0).stream.lod.near,0,'re-entry needs the near boundary, not the hysteresis edge');
+ // Dense world: chunks over the full-detail budget are downgraded to silhouettes, not dropped.
+ const dense={buildings:[],roads:[]};for(let x=-3;x<=2;x++)for(let y=-3;y<=2;y++)for(let i=0;i<20;i++){const a=x*128+4+i*6,b=y*128+4;dense.buildings.push({rings:[[[a,b],[a+5,b],[a+5,b+120],[a,b+120]]],bounds:[a,b,a+5,b+120],height:12,id:`${x}:${y}:${i}`});}
+ for(let x=-3;x<=2;x++)for(let y=-3;y<=2;y++){const a=x*128+1,b=y*128+1;dense.buildings.push({rings:[[[a,b],[a+126,b],[a+126,b+126],[a,b+126]]],bounds:[a,b,a+126,b+126],height:3,id:`${x}:${y}:plaza`});}
+ const d=createChunkStream(dense).update(0,0,45);assert.ok(d.stream.lod.downgraded>0,JSON.stringify(d.stream.lod));assert.ok(d.far.count>0);assert.ok(d.geometry.count<=LIMITS.buildings);
+ // Silhouette geometry: a 40-point circle simplifies to at most 10 corners; walls + roof only.
+ const circle=Array.from({length:40},(_,i)=>[Math.cos(i/40*2*Math.PI)*10,Math.sin(i/40*2*Math.PI)*10]);assert.ok(simplifyRing(circle).length<=10);
+ const box={buildings:[{rings:[[[0,0],[10,0],[10,10],[0,10]]],bounds:[0,0,10,10],height:9}]};const g=buildImpostors(box);assert.equal(g.position.length/3,4*6+2*3);assert.equal(Math.max(...g.position.filter((_,i)=>i%3===2)),9);
+});

@@ -142,3 +142,17 @@ test('spring-back takes the shortest arc after multiple full look-around turns',
   assert.ok(next>350&&next<360);
  }
 });
+test('driving track: timestamp-keyed prediction removes backward steps and lag; walking returns the raw fix',async()=>{
+ const {createTrack,SENSORS}=await import('../src/sensors.js');const {simulate}=await import('../scripts/drive-sim.mjs');
+ const walk=createTrack();walk.update([1,2],1000,{speed:1.2,course:0,arrival:1200});walk.update([1.5,3],2000,{speed:1.2,course:0,arrival:2300});assert.deepEqual(walk.predict(2800,SENSORS.positionTau),[1.5,3]);
+ // Batched delivery: an old fix delivered after a newer one is stale and cannot pull the prediction back.
+ const t=createTrack();t.update([0,0],1000,{speed:10,course:0,arrival:1200});t.update([0,10],2000,{speed:10,course:0,arrival:2200});const before=t.predict(2700);
+ assert.equal(t.update([0,9],1900,{speed:10,course:0,arrival:2700}).stale,true);assert.deepEqual(t.predict(2700),before);
+ // Prediction runs on the receiver clock minus the observed latency: 0.5 s after delivery at 10 m/s is 5 m ahead.
+ assert.ok(Math.abs(before[1]-15)<.6,`predicted ${before}`);
+ // A real jump beyond 3 × the snap threshold restarts the track at the fix.
+ assert.equal(t.update([0,500],3000,{speed:10,course:0,arrival:3200}).reset,true);assert.deepEqual(t.predict(3200),[0,500]);
+ t.shift(5,-5);assert.deepEqual(t.predict(3200),[5,495]);
+ for(const mph of [20,35,60]){const speed=mph/2.23694,base=simulate({pipeline:'baseline',speed,seed:3}),next=simulate({pipeline:'track',speed,seed:3});
+  assert.ok(next.maxBackwardM<.1,`${mph} mph backward ${next.maxBackwardM}`);assert.ok(Math.abs(next.alongBiasM)<Math.abs(base.alongBiasM)/3,`${mph} mph lag ${next.alongBiasM} vs ${base.alongBiasM}`);assert.ok(next.alongRmsM<base.alongRmsM/2);}
+});

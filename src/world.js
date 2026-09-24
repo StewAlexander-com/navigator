@@ -133,3 +133,42 @@ export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
   }
   return {position: new Float32Array(pos), normal: new Float32Array(normal), uv: new Float32Array(uv), style:new Uint8Array(styles), count, simplified, omitted: candidates.length-count};
 }
+// Prototype G far field. Each building becomes a flat-shaded silhouette prism: its outer ring simplified (Visvalingam,
+// dropping corners that enclose less than `tolerance`² m², at most `maxPoints` corners), walls plus a flat roof, no holes,
+// no gable, no façade detail. Heights are the near-field heights, so a building keeps its massing when it changes LOD;
+// a small gabled home's roof sits halfway up its near-field ridge. A ring that will not triangulate falls back to its bounds.
+export function simplifyRing(ring, tolerance = 1.5, maxPoints = 10) {
+  const r = ring.slice(), limit = tolerance * tolerance;
+  const area = i => {const a = r[(i - 1 + r.length) % r.length], b = r[i], c = r[(i + 1) % r.length]; return Math.abs((b[0]-a[0])*(c[1]-a[1])-(c[0]-a[0])*(b[1]-a[1])) / 2;};
+  while (r.length > 3) {
+    let min = Infinity, at = -1;
+    for (let i = 0; i < r.length; i++) {const v = area(i); if (v < min) {min = v; at = i;}}
+    if (min >= limit && r.length <= maxPoints) break;
+    r.splice(at, 1);
+  }
+  return r;
+}
+export function buildImpostors(world, budget = {vertices: 3000, buildings: 64}, {tolerance = 1.5, maxPoints = 10} = {}) {
+  const pos = [], normal = [], uv = [], styles = []; let code = 0;
+  const triangle = (a, b, c, n) => {pos.push(...a, ...b, ...c); normal.push(...n, ...n, ...n); uv.push(0,0,0,0,0,0); styles.push(code,32,code,32,code,32);};
+  let count = 0, fallback = 0;
+  for (const b of world.buildings) {
+    if (count >= budget.buildings) break;
+    code = b.style?.kind || 0;
+    let ring = simplifyRing(b.rings[0], tolerance, maxPoints), roof = ShapeUtils.triangulateShape(ring.map(p => new Vector2(...p)), []);
+    if (!roof.length) {const [a, c, d, e] = b.bounds; ring = [[a,c],[d,c],[d,e],[a,e]]; roof = [[0,1,2],[0,2,3]]; fallback++;}
+    if (pos.length / 3 + ring.length * 6 + roof.length * 3 > budget.vertices) break;
+    const len = (p, q) => Math.hypot(q[0]-p[0], q[1]-p[1]), o = b.rings[0];
+    const gabled = b.style?.kind === 1 && b.rings.length === 1 && o.length === 4 && ringArea(o) <= 250;
+    const h = gabled ? b.height + GABLE_RISE * Math.min(len(o[0], o[1]), len(o[1], o[2])) / 2 : b.height;
+    for (const t of roof) triangle(...t.map(i => [...ring[i], h]), [0, 0, 1]);
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], c = ring[(i + 1) % ring.length], dx = c[0]-a[0], dy = c[1]-a[1], l = Math.hypot(dx, dy);
+      if (l < 0.01) continue;
+      const n = [dy/l, -dx/l, 0], p = [...a, 0], q = [...c, 0], r = [...c, h], s = [...a, h];
+      triangle(p, q, r, n); triangle(p, r, s, n);
+    }
+    count++;
+  }
+  return {position: new Float32Array(pos), normal: new Float32Array(normal), uv: new Float32Array(uv), style: new Uint8Array(styles), count, fallback, omitted: world.buildings.length - count};
+}

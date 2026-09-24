@@ -256,3 +256,8 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 
 - `npm test`: 94 passed (new: strict landmark rule, food limited to 60 m, landmarks to 120 m, at most two specials and one plain name, cuisine and hours formatting).
 - Dev server, bundled LA, ten poses: at most one name on screen at a time. The debounce was confirmed (nothing at 150 ms after arriving; "Pan American Lofts" after it settles). Its card showed five rows (address 253 South Broadway, apartments, built 1897, 5 floors, 26.3 m) with no "More" button. A bug found here and fixed: a pending fade-in never completed once the render loop slept, now handled by a 150 ms timer.
+
+## v0.1.30 — name ranges widened slightly
+
+- `npm test`: 94 passed (range fixtures updated: food beyond 85 m, landmark within 150 m).
+- Dev server, bundled LA, ten poses: names at 4 of 10, at most one at a time. At the start pose, "(abeautifullife) Jamaican" shows; "The Blue Cube" stays hidden because it would have to move more than 48 px around the street pill. Fixed: a cached empty pick from before the scene was ready.

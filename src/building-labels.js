@@ -2,7 +2,7 @@
 // ⓘ button appears only when the building's OSM tags carry more than its name. Details are fetched from the OSM API
 // only when ⓘ is tapped and are discarded when the pop-up closes (✕, or 2.5 m of movement).
 import {simplifyRing} from './world.js';
-export const LABELS = Object.freeze({radius: 150, occluderRadius: 130, shown: 1, special: 2, specialDistance: 120, foodDistance: 60, near: 5, nearMax: 7, maxDistance: 120, lift: 5, minLift: 2.4, offset: .6, closeDistance: 2.5, api: 'https://api.openstreetmap.org/api/0.6'});
+export const LABELS = Object.freeze({radius: 175, occluderRadius: 160, shown: 1, special: 2, specialDistance: 150, foodDistance: 85, near: 6, nearMax: 9, maxDistance: 120, lift: 5, minLift: 2.4, offset: .6, closeDistance: 2.5, api: 'https://api.openstreetmap.org/api/0.6'});
 const orient = r => r.reduce((s, a, i) => {const b = r[(i + 1) % r.length]; return s + a[0] * b[1] - b[0] * a[1];}, 0) > 0 ? 1 : -1;
 // The wall that faces the street: of edges at least 4 m long, the one whose midpoint is nearest a non-footway road
 // (within 40 m), computed once per building and cached. Falls back to the longest edge.

@@ -86,7 +86,8 @@ function syncBuildingPills(force=false){
  const now=performance.now(),fast=positioning.state.mode==='gps'&&(gps.speed??0)>PILL.maxSpeed;
  const pose=`${player.x.toFixed(1)},${player.y.toFixed(1)},${Math.round(player.heading/2)},${labels.anchors.length}`;
  const candidates=!ready||fast?[]:(!force&&pose===labels.pose&&labels.visible)?labels.visible:visibleLabels(labels.anchors,labels.blockers,player);
- labels.pose=pose;labels.visible=candidates;
+ // Only a real pick is cached: before the scene is ready (or while driving) the next tick must pick again.
+ labels.pose=ready&&!fast?pose:null;labels.visible=candidates;
  const seen=new Set();
  for(const v of candidates){seen.add(v.id);let slot=labels.slots.get(v.id);
   if(!slot){if(labels.slots.size>=LABELS.shown+LABELS.special+2)continue;slot={el:pillElement(),first:now,shown:false};labels.slots.set(v.id,slot);
@@ -105,7 +106,9 @@ function placeBuildingPills(project){
  for(const slot of labels.slots.values()){const {el,v}=slot;let on=slot.shown;
   const a=on?project(v.x,v.y,v.z):null;if(on&&(!a.visible||a.x<20||a.x>innerWidth-20||a.y<20||a.y>innerHeight-20))on=false;
   if(on){const w=el.offsetWidth||140,h=el.offsetHeight||34,rect={x:a.x-w/2,y:a.y-h/2,w,h},p=place(rect,taken,view);
-   if(v.special&&(p.moved||p.scale<1))on=false;else{el.style.left=a.x+'px';el.style.top=(p.y+h/2)+'px';el.style.scale=p.scale<1?String(p.scale):'';taken.push(placedRect(rect,p));}}
+   // A food/landmark name may be nudged up to 48 px off its wall to clear the HUD; further (or shrunk) it would no
+   // longer read as belonging to that wall, so it hides instead.
+   if(v.special&&(p.scale<1||Math.abs(p.y-rect.y)>48))on=false;else{el.style.left=a.x+'px';el.style.top=(p.y+h/2)+'px';el.style.scale=p.scale<1?String(p.scale):'';taken.push(placedRect(rect,p));}}
   el.classList.toggle('on',on);}
 }
 async function openBuilding(id,name,button=null){
@@ -285,14 +288,14 @@ worker.onmessage=({data})=>{
   $('area-name').textContent=explore.active?explore.name:data.radius?'Live area around you':'Downtown Los Angeles';
   $('data-state').textContent=`${data.live?'Live '+data.provider:'Bundled OSM'} · ${data.timestamp?data.timestamp.slice(0,10):data.radius?'this session':'fixed LA area'}${data.radius?` · ${data.radius*2} m square${data.cached?' · reused':''}`:''}`;
  }
- if(data.labels){labels.anchors=data.labels.anchors;labels.blockers=data.labels.blockers;syncBuildingPills(true);}
+ if(data.labels){labels.anchors=data.labels.anchors;labels.blockers=data.labels.blockers;labels.pose=null;}
  if(data.roads){baseRoads=data.roads;roads=cacheRoads?.length?cacheRoads:baseRoads;worldLayer.setRoads(roads);}
  if(data.geometry)worldLayer.setBuildings({...data.geometry,far:data.far});if(data.extras){worldLayer.setSurfaces(data.extras.surfaces);worldLayer.setTrees(data.extras.trees);metrics.extras={areas:data.extras.areaCount,trees:data.extras.treeCount,mapped:data.extras.mappedTrees};}metrics.stream=data.stream;lastBuild=[data.x,data.y];lastStreamHeading=data.heading;
  if(Math.hypot(player.x-data.x,player.y-data.y)>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  metrics.queryMs=data.ms;
  if(!ready){metrics.firstViewMs=performance.now()-started;ready=true;startRoadCache();showRoadCache();notice('Drag to look. Use the arrows or W A S D to explore, or enable your location.',7000);}
  else if(data.areaLoaded)notice(explore.active&&data.radius?`Exploring ${explore.name}. Use the arrows or W A S D; walk to the edge of the 800 m area to load the next one.`:data.radius?(data.cached?'OpenStreetMap area reused from this session.':`OpenStreetMap area loaded around you (${data.provider}).`):'OpenStreetMap area refreshed for this session.',5000);
- updateUI();drawMini();camera();if(positioning.state.mode==='gps')start();
+ updateUI();drawMini();camera();syncBuildingPills(true);if(positioning.state.mode==='gps')start();
 };
 worker.onerror=()=>{busy=false;$('refresh').disabled=false;endProgress('area');endProgress('prefetch');notice('Map processing failed. Reload to restart the worker.');};
 function drawMini(){

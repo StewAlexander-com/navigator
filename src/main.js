@@ -5,7 +5,7 @@ import {updateTravelBearing} from './chevron.js';
 import {createPositioning} from './positioning.js';
 import {createSunCheck} from './sun-check.js';
 import {smoothHeading, smoothPosition, headingDelta, areaCovers, edgeRunway, shouldPrefetch, liveSquare, retryDelay, deadReckon, snapDistanceFor, courseWeight, fuseHeading, createTrack, SENSORS} from './sensors.js';
-import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition} from './world.js';
+import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition, boundedToArea, areaEdgeDistance} from './world.js';
 import {nearestStreet,streetSegments,labelPoint} from './street-label.js';
 import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import {progressFraction, progressText, updateRate} from './progress.js';
@@ -67,6 +67,9 @@ const indoor={id:0,verdict:null,misses:0,located:null};
 // Explore a place: a manual (GPS-off) scene anywhere. `pending` is the requested {point, name} until its square loads
 // (point null = back to the bundled LA demo); `active` while an explored square is the current area.
 const explore={active:false,pending:null,name:null,point:null};
+// Edge of the loaded area in manual mode: `asked` stops the prompt repeating until you walk `rearm` metres back in;
+// `stepping` marks a next-area download so the player keeps its position instead of jumping to the centre.
+const edge={asked:false,stepping:false,rearm:30};
 function locate(){if(!gps.target||positioning.state.mode!=='gps')return;worker.postMessage({type:'locate',id:++indoor.id,x:gps.target[0],y:gps.target[1],origin:area.origin});}
 function showIndoor(){const v=indoor.verdict,show=!!v&&positioning.state.mode==='gps';$('indoor-pill').hidden=!show;if(show){$('indoor-text').textContent=v.text;$('indoor-meta').textContent=`GPS HINT · ${v.level==='likely'?'HIGH':'LOW'} CONFIDENCE · ±${Math.round(v.accuracy)} m`;}scheduleLayout();}
 // Driving-speed position track (alpha-beta filter on receiver timestamps); walking pace returns the raw fix.
@@ -111,7 +114,7 @@ function renderProgress(){
 const PHASES={downloading:'',parsing:'parsing OSM data',building:'building geometry'};
 // `live` refreshes the fixed LA box; `center` loads a square around (or ahead of) the GPS `fix`, reusing a square the worker
 // already holds unless `fresh`; neither → bundled snapshot.
-function request({live=false,center=null,radius=null,fix=null,fresh=false}={}){if(busy)return false;busy=true;$('refresh').disabled=true;worker.postMessage({type:'load',id:++requestId,url:new URL('osm-snapshot.json',document.baseURI).href,live,center,radius,fix,fresh,heading:player.travelBearing??player.heading,x:center?0:player.x,y:center?0:player.y});beginProgress('area',center?'Downloading the OpenStreetMap area around you':live?'Refreshing this area from OpenStreetMap':'Loading the bundled OpenStreetMap area');return true;}
+function request({live=false,center=null,radius=null,fix=null,fresh=false,lean=false}={}){if(busy)return false;busy=true;$('refresh').disabled=true;worker.postMessage({type:'load',id:++requestId,url:new URL('osm-snapshot.json',document.baseURI).href,live,center,radius,fix,fresh,lean,heading:player.travelBearing??player.heading,x:center?0:player.x,y:center?0:player.y});beginProgress('area',center?'Downloading the OpenStreetMap area around you':live?'Refreshing this area from OpenStreetMap':'Loading the bundled OpenStreetMap area');return true;}
 const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e6cca8'}}]},center:ORIGIN,zoom:18,pitch:90,maxPitch:95,centerClampedToGround:false,interactive:false,attributionControl:false,pixelRatio:Math.min(devicePixelRatio,1.5),maxTileCacheSize:16,renderWorldCopies:false,canvasContextAttributes:{antialias:false,preserveDrawingBuffer:false}});
 function fitView(){map.setVerticalFieldOfView(innerWidth<700?65:45);if(ready)camera();scheduleLayout();}
 // Overlay layout. Anchored UI (brand and header buttons, area name, compass, minimap, bottom bar, footer, stats) are
@@ -214,6 +217,7 @@ worker.onmessage=({data})=>{
  }
  if(data.id!==requestId)return;busy=false;$('refresh').disabled=false;endProgress('area');
  if(data.type==='error'){
+  if(edge.stepping){edge.stepping=false;edge.asked=false;}
   if(explore.pending){const first=!ready;explore.pending=null;$('place-status').textContent=data.message;if(first){notice('That place could not be downloaded. Showing the Los Angeles demo instead.',7000);request();return;}}
   // Exponential backoff with jitter; a Retry-After from the service is never undercut and no second provider is tried on a rate limit.
   gps.failures++;gps.retryMs=retryDelay(gps.failures,data.retryMs);gps.retryAt=performance.now()+gps.retryMs;
@@ -222,6 +226,7 @@ worker.onmessage=({data})=>{
   gps.failures=0;gps.retryMs=0;gps.retryAt=-Infinity;if(gps.prefetch&&gps.prefetch.bbox.join()===data.bbox.join())gps.prefetch=null;
   if(data.origin.join()!==area.origin.join()||data.bbox.join()!==area.bbox.join())reanchor(data.origin,data.bbox);
   // An explored place (or the return to LA) starts at the centre of its square, like the demo.
+  if(edge.stepping){edge.stepping=false;edge.asked=false;}
   if(explore.pending){explore.active=!!explore.pending.point;explore.name=explore.pending.name;explore.point=explore.pending.point;explore.pending=null;Object.assign(player,{x:0,y:0,pitch:0,travelBearing:null,chevronHeading:null});camera();}
   locate();
   area.live=data.live;area.radius=data.radius;area.provider=data.provider;area.cached=!!data.cached;area.kinds=data.kinds||null;area.prior=!!data.prior;metrics.responseBytes=data.bytes;
@@ -233,7 +238,7 @@ worker.onmessage=({data})=>{
  if(Math.hypot(player.x-data.x,player.y-data.y)>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  metrics.queryMs=data.ms;
  if(!ready){metrics.firstViewMs=performance.now()-started;ready=true;startRoadCache();showRoadCache();notice('Drag to look. Use the arrows or W A S D to explore, or enable your location.',7000);}
- else if(data.areaLoaded)notice(explore.active&&data.radius?`Exploring ${explore.name}. Use the arrows or W A S D; you can move 120 m from the centre.`:data.radius?(data.cached?'OpenStreetMap area reused from this session.':`OpenStreetMap area loaded around you (${data.provider}).`):'OpenStreetMap area refreshed for this session.',5000);
+ else if(data.areaLoaded)notice(explore.active&&data.radius?`Exploring ${explore.name}. Use the arrows or W A S D; walk to the edge of the 800 m area to load the next one.`:data.radius?(data.cached?'OpenStreetMap area reused from this session.':`OpenStreetMap area loaded around you (${data.provider}).`):'OpenStreetMap area refreshed for this session.',5000);
  updateUI();drawMini();camera();if(positioning.state.mode==='gps')start();
 };
 worker.onerror=()=>{busy=false;$('refresh').disabled=false;endProgress('area');endProgress('prefetch');notice('Map processing failed. Reload to restart the worker.');};
@@ -293,7 +298,8 @@ function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min
   let f=Number(keys.has('KeyW'))-Number(keys.has('KeyS')),s=Number(keys.has('KeyD'))-Number(keys.has('KeyA'));const length=Math.hypot(f,s);if(length>1){f/=length;s/=length;}
   const h=player.heading*Math.PI/180,nx=player.x+(Math.sin(h)*f+Math.cos(h)*s)*3*dt,ny=player.y+(Math.cos(h)*f-Math.sin(h)*s)*3*dt;
   const oldX=player.x,oldY=player.y;
-  [player.x,player.y]=boundedPosition(nx,ny);updateTravelBearing(player,player.x-oldX,player.y-oldY);if(Math.hypot(nx,ny)>LIMITS.movement)notice('Edge of this prototype area. Turn back or recenter.',2000);
+  const [bx,by,hit]=boundedToArea(nx,ny,area.bbox,area.origin);[player.x,player.y]=[bx,by];updateTravelBearing(player,player.x-oldX,player.y-oldY);
+  if(hit)reachEdge();else if(edge.asked&&areaEdgeDistance(player.x,player.y,area.bbox,area.origin)>edge.rearm)edge.asked=false;
  }
  camera();
  if(!busy&&(Math.hypot(player.x-lastBuild[0],player.y-lastBuild[1])>12||Math.abs(headingDelta(lastStreamHeading,player.travelBearing??player.heading))>45)){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
@@ -303,7 +309,7 @@ function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min
 function start(){if(!frameId&&ready){lastTime=performance.now();frameId=requestAnimationFrame(loop);}}
 function stop(){if(drag){const id=drag.id;drag=null;if($('map').hasPointerCapture(id))$('map').releasePointerCapture(id);}keys.clear();if(frameId)cancelAnimationFrame(frameId);frameId=0;document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));metrics.fps=null;}
 const supported=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','ArrowUp','ArrowDown']);
-addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('place-dialog').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);addEventListener('focus',start);
+addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('place-dialog').open||$('edge-dialog').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);addEventListener('focus',start);
 document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();positioning.pause();roadWorker?.postMessage({type:'pause'});}else{positioning.resume();if(roadCacheEnabled&&!roadHold)roadWorker?.postMessage({type:'resume'});start();}});
 for(const button of document.querySelectorAll('[data-key]')){button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keys.add(button.dataset.key);button.classList.add('active');start();});button.addEventListener('lostpointercapture',()=>{keys.delete(button.dataset.key);button.classList.remove('active');});}
 // A compass-follow drag temporarily owns the view; release eases back to the latest sensor heading.
@@ -319,13 +325,20 @@ $('reset').onclick=()=>{stop();
  if(positioning.state.mode==='gps'){player.pitch=0;if(gps.target){[player.x,player.y]=gps.target;}if(positioning.state.course!==null)player.travelBearing=positioning.state.course;camera();drawMini();updateUI();start();notice(gps.target?'Snapped to the latest GPS fix.':'Waiting for a GPS fix.',2500);return;}
  Object.assign(player,{x:0,y:0,heading:38,pitch:0,travelBearing:null,chevronHeading:null});camera();drawMini();updateUI();if(!busy){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:0,y:0,heading:player.heading});}notice('Returned to the starting point.',2500);};
 $('view-mode').onclick=()=>{followCompass=!followCompass;applyMode();start();notice(followCompass?'View follows the compass again.':'Free look: drag or use turn buttons. GPS still moves your position.',4000);};
-function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();track.clear();driveLog.origin=null;driveLog.entries.length=0;gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;gps.prefetch=null;indoor.verdict=null;indoor.misses=0;showIndoor();[player.x,player.y]=boundedPosition(player.x,player.y);camera();drawMini();notice('Location off. Manual exploration within 120 m of the loaded area center.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
+function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();track.clear();driveLog.origin=null;driveLog.entries.length=0;gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;gps.prefetch=null;indoor.verdict=null;indoor.misses=0;showIndoor();[player.x,player.y]=boundedToArea(player.x,player.y,area.bbox,area.origin);camera();drawMini();notice('Location off. Explore by hand up to the edge of the loaded area.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
 $('gps').onclick=toggleGps;$('gps-toggle').onclick=toggleGps;$('gps-cancel').onclick=()=>$('gps-dialog').close();
 $('gps-enable').onclick=()=>{$('gps-dialog').close();explore.active=false;setPlaceUrl(null);followCompass=true;stop();positioning.enable().then(ok=>{if(ok)notice('Waiting for your location…');});};
 $('road-cache-toggle').onclick=()=>{roadCacheEnabled=!roadCacheEnabled;try{localStorage.setItem('navigator-roads-enabled',String(roadCacheEnabled));}catch{}if(roadCacheEnabled)startRoadCache();else roadWorker?.postMessage({type:'pause'});showRoadCache();};
 $('road-cache-area').onclick=()=>{roadCacheEnabled=true;startRoadCache();sendRoadPosition(true);showRoadCache();};
 $('road-cache-clear').onclick=()=>{roadCacheEnabled=false;try{localStorage.setItem('navigator-roads-enabled','false');}catch{}if(!roadWorker)startRoadCache();roadWorker.postMessage({type:'clear'});showRoadCache();};
 $('menu').onclick=()=>{stop();$('guide').showModal();};
+// At the edge: ask once, then download an 800 m square centred on the player (dropping the old one) or stay.
+function reachEdge(){if(edge.asked||busy||edge.stepping||$('edge-dialog').open)return;edge.asked=true;stop();$('edge-dialog').showModal();}
+$('edge-stay').onclick=()=>{$('edge-dialog').close();notice('Staying in this area. Walk back in and out to be asked again, or use Change place.',5000);};
+$('edge-next').onclick=()=>{$('edge-dialog').close();const point=toLngLat(player.x,player.y,area.origin);
+ if(!request({center:point,radius:LIMITS.area,fix:point,lean:true})){edge.asked=false;notice('An area is still loading. Try again in a moment.',4000);return;}
+ edge.stepping=true;beginProgress('area','Downloading the next 800 m area');
+ if(!explore.active){explore.active=true;explore.name=area.radius?'Next area':'Near downtown Los Angeles';}explore.point=point;setPlaceUrl(point,explore.name);};
 // Explore a place: coordinates are parsed locally; anything else is looked up with Nominatim. GPS is turned off first,
 // because a live fix would pull the scene back to where you are.
 function setPlaceUrl(point,name){const url=new URL(location.href);if(point){url.searchParams.set('at',`${point[1].toFixed(5)},${point[0].toFixed(5)}`);if(name)url.searchParams.set('name',name);else url.searchParams.delete('name');}else{url.searchParams.delete('at');url.searchParams.delete('name');}history.replaceState(null,'',url);}
@@ -357,6 +370,8 @@ let installPrompt;addEventListener('beforeinstallprompt',e=>{e.preventDefault();
 if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{offlineReady=true;$('offline-status').textContent='App and bundled area are ready offline. Live building areas last for this session; downloaded road packages stay on this device. iPhone: Share → Add to Home Screen.';}).catch(()=>{$('offline-status').textContent='Offline setup failed. Keep this tab online and reload to retry.';});}else $('offline-status').textContent='Offline caching is enabled in the production build.';
 applyMode();
 // Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype E.
+// Development-only hook for browser checks: place the manual camera. Absent from production builds.
+if(import.meta.env.DEV)window.navigatorTeleport=(x,y,heading=player.heading)=>{Object.assign(player,{x,y,heading});camera();updateUI();start();};
 window.navigatorDriveLog=()=>({version:1,note:'metres east/north of the first logged fix; t = receiver ms, arrival = delivery ms',entries:driveLog.entries.slice()});
 $('drive-log').onclick=()=>{const blob=new Blob([JSON.stringify(window.navigatorDriveLog(),null,1)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`navigator-sensor-log-${new Date().toISOString().slice(0,19).replace(/:/g,'')}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
 window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},layout:{overlaps:overlays.overlaps,fixedOverlaps:overlays.fixedOverlaps||0,placements:overlays.placements,street:overlays.street,obstacles:overlays.obstacles.length},indoor:{verdict:indoor.verdict,located:indoor.located,misses:indoor.misses,visible:!$('indoor-pill').hidden},progress:{task:progress.task,label:progress.label,bytes:progress.bytes,total:progress.total,fraction:progressFraction(progress),detail:progress.detail,visible:!$('progress').hidden,text:$('progress-meta').textContent},street:street?{...street}:null,limits:LIMITS,area:{...area},explore:{active:explore.active,name:explore.name,point:explore.point,pending:!!explore.pending},gps:{track:track.state(),target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend,failures:gps.failures,retryMs:gps.retryMs,retryInMs:gps.retryAt===-Infinity?null:Math.max(0,gps.retryAt-performance.now()),prefetch:gps.prefetch,prefetching:gps.prefetching,prefetches:gps.prefetches},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

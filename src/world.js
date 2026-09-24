@@ -30,6 +30,18 @@ export function boundedPosition(x, y) {
   const length = Math.hypot(x, y);
   return length > LIMITS.movement ? [x * LIMITS.movement / length, y * LIMITS.movement / length] : [x, y];
 }
+// Manual exploration (v0.1.26) may walk to the edge of the loaded area, `margin` metres short of it, instead of the
+// old 120 m circle. Returns [x, y, hit] with `hit` true when the step was clamped at the edge.
+export function boundedToArea(x, y, [south, west, north, east], origin = ORIGIN, margin = 10) {
+  const [minX, minY] = toLocal([west, south], origin), [maxX, maxY] = toLocal([east, north], origin);
+  const cx = Math.min(maxX - margin, Math.max(minX + margin, x)), cy = Math.min(maxY - margin, Math.max(minY + margin, y));
+  return [cx, cy, cx !== x || cy !== y];
+}
+// Metres from (x, y) to the nearest edge of the area (negative outside).
+export function areaEdgeDistance(x, y, [south, west, north, east], origin = ORIGIN) {
+  const [minX, minY] = toLocal([west, south], origin), [maxX, maxY] = toLocal([east, north], origin);
+  return Math.min(x - minX, maxX - x, y - minY, maxY - y);
+}
 export function parseWorld(raw, origin = ORIGIN) {
   if (!Array.isArray(raw.elements) || raw.elements.length > 30000 || raw.remark) throw new Error('Incomplete or oversized OSM response.');
   const features = osmtogeojson(raw, {flatProperties: true}).features;

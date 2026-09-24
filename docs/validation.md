@@ -235,3 +235,8 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 
 - `npm test`: 87 passed (two new: coordinate parsing, including hemisphere letters, swapped order and bounds; Nominatim first-hit, no-hit and error handling).
 - Preview build, headless Chromium, live network: `36.0957, -79.2670` loaded an 800 m square (Overpass unavailable, OSM API fallback) with 60 buildings and the player at the centre, URL `?at=36.09570,-79.26700`. "Mebane, North Carolina" resolved through Nominatim to 36.09597, −79.26696 with 63 buildings. Back to the Los Angeles demo restored the bundled area and cleared the URL. No page errors.
+
+## v0.1.26 — walk to the edge, then load the next area
+
+- `npm test`: 88 passed (new: clamp at the area edge less the 10 m margin, and edge distance).
+- Dev server, headless Chromium, live network: starting 3 m inside the east edge of the bundled LA box and walking east, the end-of-area dialog opened at x = 405.6 m. Download the next area loaded an 800 m square centred on that point. The player kept its position (now 0, 0 in the new frame), the area was named "Near downtown Los Angeles", and there were no page errors. `window.navigatorTeleport` is a development-only hook and is absent from production builds.

@@ -23,3 +23,10 @@ test('polygon courtyard remains empty in roof triangulation',()=>{
 });
 test('heights and movement boundaries are deterministic',()=>{assert.equal(height({height:'100 ft'}),30.48);assert.equal(height({'building:levels':'5'}),16);assert.equal(height({building:'house'}),7);assert.equal(height({height:'99999'}),180);assert.equal(Math.round(Math.hypot(...boundedPosition(1000,1000))),120);const p=toLocal(toLngLat(30,-40));assert.ok(Math.abs(p[0]-30)<1e-6);assert.ok(Math.abs(p[1]+40)<1e-6);});
 test('partial Overpass responses fail rather than being shown as complete',()=>{assert.throws(()=>parseWorld({elements:[],remark:'runtime error: timeout'}));});
+test('v0.1.26 manual movement reaches the area edge (less a margin) and reports the hit',async()=>{
+ const {boundedToArea,areaEdgeDistance,toLngLat,ORIGIN}=await import('../src/world.js');const {areaAround}=await import('../src/sensors.js');
+ const bbox=areaAround(ORIGIN,400);
+ let [x,y,hit]=boundedToArea(300,0,bbox,ORIGIN);assert.equal(hit,false);assert.equal(x,300);
+ [x,y,hit]=boundedToArea(450,-20,bbox,ORIGIN);assert.equal(hit,true);assert.ok(Math.abs(x-390)<1,`x ${x}`);assert.equal(y,-20);
+ assert.ok(Math.abs(areaEdgeDistance(0,0,bbox,ORIGIN)-400)<1);assert.ok(areaEdgeDistance(0,395,bbox,ORIGIN)<6);
+});

@@ -103,6 +103,8 @@ self.onmessage = async ({data}) => {
         if(prefetching)await prefetching.catch(()=>{});
         const hit=data.fresh?null:covering(data.fix||data.center);
         const square=hit||await fetchSquare(data.center,data.radius||LIMITS.area,report);
+        // Stepping to the next area by hand keeps only that square: the one behind is dropped to stay lean.
+        if(data.lean)squares.splice(0,squares.length,square);
         cached=!!hit;origin=square.origin;radius=square.radius;bbox=square.bbox;
         result={parsed:square.parsed,size:square.bytes,provider:square.provider};
       } else if (data.live) {

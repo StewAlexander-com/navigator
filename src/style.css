@@ -32,3 +32,4 @@
 .area{text-shadow:0 1px 3px #132d38b3}
 #stats #drive-log{margin-top:8px;padding:6px 10px;border-radius:8px;font-size:12px}#stats .fine{font-size:11px;opacity:.75;margin:6px 0 0}
 .place-open{margin-top:8px;padding:5px 10px;font-size:12px;border-radius:8px;pointer-events:auto;min-height:0}#place-dialog input{width:100%;font:inherit;font-size:16px;padding:10px 12px;border-radius:10px;border:1px solid #ffffff40;background:#0e222b;color:#edf4f5;margin:4px 0 6px}.place-label{font-size:12px;letter-spacing:.08em;opacity:.8}#place-dialog code{font-size:.95em}
+#edge-dialog #edge-stay,#place-dialog #place-la{margin-top:10px;width:100%;font-size:13px;padding:10px}

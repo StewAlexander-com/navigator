@@ -191,20 +191,23 @@ export function treeShape(p) {
   if (p.leaf_type === 'needleleaved' || CONIFER.test(name)) return 1;
   return 0;
 }
-const SHAPE_SIZE = [[8, .32], [10, .22], [12, .2]];
+// [default height, crown radius / height, height spread]. Untagged trees vary deterministically by position (±spread),
+// so a row of mapped-but-untagged palms is no longer a row of identical 12 m poles; crown width varies separately ±15 %.
+const SHAPE_SIZE = [[8, .32, .35], [10, .22, .3], [13, .13, .4]];
 const hash = (x, y) => {const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453; return s - Math.floor(s);};
 function inRing(r, x, y) {let inside = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) {const a = r[j], b = r[i]; if ((a[1] > y) !== (b[1] > y) && x < (b[0]-a[0]) * (y-a[1]) / (b[1]-a[1]) + a[0]) inside = !inside;} return inside;}
 const inRings = (rings, x, y) => inRing(rings[0], x, y) && !rings.slice(1).some(r => inRing(r, x, y));
 export function parseExtras(features, origin = ORIGIN, buildings = []) {
   const areas = [], trees = [], local = p => toLocal(p, origin);
   const insideBuilding = (x, y) => buildings.some(b => x >= b.bounds[0] && x <= b.bounds[2] && y >= b.bounds[1] && y <= b.bounds[3] && inRings(b.rings, x, y));
-  const treeHeight = (p, shape = 0) => {const h = parseFloat(p.height); return Number.isFinite(h) && h > 2 && h < 40 ? h : SHAPE_SIZE[shape][0];};
+  const treeHeight = (p, shape = 0, x = 0, y = 0) => {const h = parseFloat(p.height); return Number.isFinite(h) && h > 2 && h < 40 ? h : SHAPE_SIZE[shape][0] * (1 + (hash(x * 1.7, y * 2.3) * 2 - 1) * SHAPE_SIZE[shape][2]);};
+  const crown = (h, shape, x, y) => h * SHAPE_SIZE[shape][1] * (.85 + .3 * hash(y * 3.1, x * .7));
   for (const f of features) {
     const p = f.properties || {}, g = f.geometry; if (!g) continue;
-    if (p.natural === 'tree' && g.type === 'Point') {const [x, y] = local(g.coordinates), shape = treeShape(p), h = treeHeight(p, shape); trees.push([x, y, h, h * SHAPE_SIZE[shape][1], 1, shape]); continue;}
+    if (p.natural === 'tree' && g.type === 'Point') {const [x, y] = local(g.coordinates), shape = treeShape(p), h = treeHeight(p, shape, x, y); trees.push([x, y, h, crown(h, shape, x, y), 1, shape]); continue;}
     if (p.natural === 'tree_row' && g.type === 'LineString') {
-      const pts = g.coordinates.map(local), shape = treeShape(p), h = treeHeight(p, shape);
-      for (let i = 1; i < pts.length; i++) {const [a, b] = [pts[i-1], pts[i]], l = Math.hypot(b[0]-a[0], b[1]-a[1]); for (let s = 0; s < l; s += EXTRAS.rowSpacing) trees.push([a[0] + (b[0]-a[0]) * s / l, a[1] + (b[1]-a[1]) * s / l, h, h * SHAPE_SIZE[shape][1], 1, shape]);}
+      const pts = g.coordinates.map(local), shape = treeShape(p);
+      for (let i = 1; i < pts.length; i++) {const [a, b] = [pts[i-1], pts[i]], l = Math.hypot(b[0]-a[0], b[1]-a[1]); for (let s = 0; s < l; s += EXTRAS.rowSpacing) {const x = a[0] + (b[0]-a[0]) * s / l, y = a[1] + (b[1]-a[1]) * s / l, h = treeHeight(p, shape, x, y); trees.push([x, y, h, crown(h, shape, x, y), 1, shape]);}}
       continue;
     }
     const code = SURFACE.find(([, test]) => test(p))?.[0]; if (!code || areas.length >= EXTRAS.areas) continue;

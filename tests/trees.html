@@ -7,8 +7,8 @@ const player={x:0,y:0,heading:0,pitch:0,travelBearing:0},metrics={renderedFrames
 const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#b0bfc9'}}]},center:ORIGIN,zoom:18,maxPitch:95,centerClampedToGround:false,interactive:false,attributionControl:false,canvasContextAttributes:{antialias:false,preserveDrawingBuffer:true}});
 map.on('load',()=>{
  const layer=createWorldLayer(player,metrics);map.addLayer(layer);layer.setRoads([]);
- layer.setTrees(new Float32Array([-7,14,8,2.6,0, 0,18,10,2.2,1, 7,13,12,2.4,2, -2,26,9,2.9,0]));
- map.jumpTo(map.calculateCameraOptionsFromTo(toLngLat(0,0),1.65,toLngLat(0,20),6));
+ layer.setTrees(new Float32Array([-7,14,8,2.6,0, 0,18,10,2.2,1, 7,13,12,1.6,2, 10,15,15,1.9,2, 4,11,10,1.4,2, -2,26,9,2.9,0]));
+ map.jumpTo(map.calculateCameraOptionsFromTo(toLngLat(0,-14),1.65,toLngLat(0,20),7));
  window.treesReady=true;
 });
 </script></body></html>

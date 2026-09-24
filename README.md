@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.21 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.22 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,12 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Tree variety and palm shape (v0.1.22)
+
+- **Height and width.** Untagged trees vary by a position hash: broadleaf 8 m ±35 %, conifer 10 m ±30 %, palm 13 m ±40 %. Crown width varies a further ±15 %. A tagged `height` still wins.
+- **Less self-similar crowns.** Each tree samples the fBm at a hashed offset (neighbouring trees used to read neighbouring, near-identical noise) and has its own lump frequency and strength, crown stretch on two axes, and crown height (centre at 58–70 % of the tree for broadleaf), so trunk-to-crown ratios differ.
+- **Palms.** The crown is smaller (radius 13 % of height, was 20 %) and made of drooping fronds from an angular spike term, with three to four fronds per tree. The trunk tapers and leans slightly, curving with height. Still one model, one draw call, no extra vertices.
 
 ### Softer tree crowns (v0.1.21)
 

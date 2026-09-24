@@ -217,3 +217,7 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 ## v0.1.21 — softer tree crowns
 
 - `npm test`: 84 passed. `tests/trees.html` close-ups inspected in headless Chromium (software GL): broadleaf crowns round and lumpy with no visible facet lines; the underside is shaded green, not near-black. Conifer and palm crowns show a faint fine cross-hatch in this software renderer. It persisted through every variant tried (with and without noise, one- and two-sided faces), so it is probably specific to the software renderer. Confirm on a real GPU.
+
+## v0.1.22 — tree variety and palm shape
+
+- `npm test`: 84 passed. `tests/trees.html` inspected: three palms at 10, 12 and 15 m with frond crowns, tapered, leaning trunks and distinct crowns; broadleaf and conifer unchanged in cost.

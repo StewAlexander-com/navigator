@@ -25,13 +25,28 @@ float hv(vec3 p){p=fract(p*.1031);p+=dot(p,p.zyx+31.32);return fract((p.x+p.y)*p
 float nv(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(mix(hv(i),hv(i+vec3(1,0,0)),f.x),mix(hv(i+vec3(0,1,0)),hv(i+vec3(1,1,0)),f.x),f.y),mix(mix(hv(i+vec3(0,0,1)),hv(i+vec3(1,0,1)),f.x),mix(hv(i+vec3(0,1,1)),hv(i+vec3(1,1,1)),f.x),f.y),f.z);}
 void main(){
  vec3 p=position,n=normal;clump=.5;vec2 id=instanceMatrix[3].xy;float yaw=h1(vec3(id,1.))*6.2832,c=cos(yaw),s=sin(yaw);
+ // Per-tree seed: a hashed offset into the noise field (nearby trees no longer sample neighbouring, similar noise),
+ // plus independent crown stretch, lump strength and crown-height placement.
+ vec3 seed=vec3(h1(vec3(id,3.)),h1(vec3(id,7.)),h1(vec3(id,11.)))*vec3(41.,59.,23.);
+ float k1=h1(vec3(id,13.)),k2=h1(vec3(id,17.)),k3=h1(vec3(id,19.)),k4=h1(vec3(id,23.));
  if(style.x>1.5){
-  vec3 q=p-vec3(0,0,.62);vec3 u=normalize(position-vec3(0,0,.62))*2.2+vec3(id*.13,0.);float lump=.55*nv(u)+.3*nv(u*2.1+4.7)+.15*nv(u*4.3+1.9);float j=1.+(lump-.5)*(shape>1.5?1.1:.55);clump=lump;q.xy*=j;q.z*=shape>.5?1.:mix(1.,j,.5);
-  vec3 soft=normalize(q*vec3(1,1,2.6));n=normalize(mix(n,soft,.85));
-  if(shape>1.5){q.xy*=1.35;q.z*=.32;q.z-=dot(q.xy,q.xy)*.09;p=vec3(0,0,.93)+q;}
-  else if(shape>.5){float t=clamp((q.z+.36)/.72,0.,1.);p=vec3(q.xy*(1.25-t)*1.1,.14+(q.z+.36)*1.25);n=normalize(vec3(n.xy,.5));}
-  else p=vec3(0,0,.62)+q;
- }else if(shape>1.5){p.xy*=.55;p.z*=1.95;}
+  vec3 q=p-vec3(0,0,.62);vec3 u=normalize(position-vec3(0,0,.62))*(1.8+k3*1.4)+seed;
+  float lump=.55*nv(u)+.3*nv(u*2.1+4.7)+.15*nv(u*4.3+1.9);clump=lump;
+  if(shape>1.5){
+   // Palm: a small crown of drooping fronds. Radial spikes come from a high-frequency angular term, varied per tree.
+   float a=atan(q.y,q.x),spike=pow(abs(sin(a*(3.5+floor(k1*2.)*.5)+k2*6.2832)),2.5);
+   q.xy*=(.35+1.05*spike)*(.9+.3*lump);q.z=q.z*.09+.02-dot(q.xy,q.xy)*(.06+.03*k3);
+   p=vec3(0,0,.94)+q;n=normalize(mix(n,normalize(vec3(q.xy,.8)),.7));
+  }else{
+   float j=1.+(lump-.5)*(.45+.35*k4);q.xy*=j*vec2(.85+.3*k1,.85+.3*k2);q.z*=shape>.5?1.:mix(1.,j,.5)*(.85+.3*k3);
+   vec3 soft=normalize(q*vec3(1,1,2.6));n=normalize(mix(n,soft,.85));
+   if(shape>.5){float t=clamp((q.z+.36)/.72,0.,1.);p=vec3(q.xy*(1.25-t)*1.1,.14+(q.z+.36)*1.25);n=normalize(vec3(n.xy,.5));}
+   // Broadleaf: crown centre between 58 % and 70 % of height, so trunk-to-crown ratio differs tree to tree.
+   else p=vec3(0,0,.58+.12*k2)+q;
+  }
+ }else if(shape>1.5){p.xy*=mix(.75,.42,p.z/.45);p.z*=1.98;}
+ // Palms lean and curve a little (quadratic in height), trunk and crown together.
+ if(shape>1.5){vec2 lean=(vec2(k1,k4)-.5)*1.6;p.xy+=lean*p.z*p.z;}
  p.xy=mat2(c,s,-s,c)*p.xy;n.xy=mat2(c,s,-s,c)*n.xy;
  vec4 w=instanceMatrix*vec4(p,1.);local=w.xyz;norm=normalize(mat3(instanceMatrix)*n);facade=id;buildingStyle=vec2(style.x,shape);height=p.z;gl_Position=projectionMatrix*modelViewMatrix*w;}`;
 // Contact shadow: an 8-sided disc per tree, offset away from the art-direction sun and stretched along it.

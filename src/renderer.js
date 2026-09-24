@@ -148,13 +148,13 @@ void main(){
     color+=vec3(.08,.07,.03)*pow(wrap,4.)*under*(.6+.4*f);
    }
  }else{
-   // Style x: 0 two-way road, 7 one-way road, 8 road of unknown direction, 6 footway, 1 grass, 2 wood, 3 water, 4 parking, 5 plaza. Style y: road width × 10.
+   // Style x: 0 two-way road, 7 one-way road, 8 road of unknown direction, 6 footway, 9 curb, 1 grass, 2 wood, 3 water, 4 parking, 5 plaza. Style y: road width × 10.
    float surf=buildingStyle.x,width=buildingStyle.y*.1;
    float grazing=1.-max(view.z,0.);grazing*=grazing;
    float footprint=max(fwidth(local.x*14.),fwidth(local.y*14.));
    float detail=(1.-smoothstep(8.,38.,d))*(1.-smoothstep(.35,1.,footprint));
    if(surf<.5||surf>5.5||(surf>3.5&&surf<4.5)){
-    color=surf>5.5&&surf<6.5?vec3(.60,.58,.54):surf>3.5?vec3(.34,.34,.32):vec3(.29,.29,.27);
+    color=(surf>5.5&&surf<6.5)||surf>8.5?vec3(.60,.58,.54):surf>3.5?vec3(.34,.34,.32):vec3(.29,.29,.27);
     color+=vec3(.14,.105,.055)*grazing;
     color+=(grain(floor(local.xy*14.))-.5)*.035*detail;
     // Painted markings from the quad's (along, across) coordinates: double yellow centre and white edge lines on
@@ -169,6 +169,18 @@ void main(){
      float a=abs(across),aa=max(fwidth(across),1e-4),thin=clamp(.12/aa,0.,1.);
      if(surf<.5){float centre=smoothstep(.08-aa,.08+aa,a)*(1.-smoothstep(.2-aa,.2+aa,a));color=mix(color,vec3(.80,.66,.25),centre*paint*thin*.85);}
      else{float fa=max(fwidth(facade.x/9.),1e-4),dash=smoothstep(0.,fa,fract(facade.x/9.))*(1.-smoothstep(.33-fa,.33+fa,fract(facade.x/9.)));float lane=1.-smoothstep(.07-aa,.07+aa,a);color=mix(color,vec3(.86,.86,.82),lane*dash*paint*thin*.75);}
+    }
+    // Surface parking: illustrative stalls in the lot's own frame — two 5.5 m rows of 2.6 m bays either side of a
+    // 7 m aisle (an 18 m module), 12 cm faded-white lines, a darker oil band mid-bay, gone by 70 m. No geometry.
+    if(surf>3.5&&surf<4.5){
+     float m=mod(facade.y,18.),row=step(m,5.5)+step(12.5,m),paint=(1.-smoothstep(35.,70.,d));
+     float aa=max(fwidth(facade.x),1e-3),bay=abs(fract(facade.x/2.6+.5)-.5)*2.6;
+     float stall=row*(1.-smoothstep(.06-aa,.06+aa,bay));
+     float endl=(1.-smoothstep(.06-aa,.06+aa,abs(m-5.5)))+(1.-smoothstep(.06-aa,.06+aa,abs(m-12.5)));
+     float thin=clamp(.1/aa,0.,1.);
+     float depth=m<9.?m/5.5:(18.-m)/5.5;
+     color*=1.-.07*row*smoothstep(.25,.55,depth)*(1.-smoothstep(.55,.9,depth))*step(.4,bay);
+     color=mix(color,vec3(.78,.78,.74),clamp(stall+endl,0.,1.)*paint*thin*.8);
     }
     if(surf>5.5&&surf<6.5){float f=fract(facade.x/1.5),fw=max(fwidth(facade.x/1.5),1e-4);color*=1.-.10*smoothstep(.94-fw,.94+fw,f)*(1.-smoothstep(.3,.9,fw*8.));}
    }else if(surf<1.5){color=vec3(.41,.50,.28)*(1.+(grain(floor(local.xy*2.))-.5)*.14);}

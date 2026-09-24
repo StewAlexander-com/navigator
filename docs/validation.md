@@ -226,3 +226,7 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 
 - `npm test`: 85 passed (one new: along, down −20°, up +4°, turned 60°, straight across, facing away 20 m off the street, behind-only and empty input).
 - Preview build, headless Chromium, 1100 × 700: the pill stayed visible and centred for start, pitch −18°, pitch +4°, heading 92° (54° off the street axis) and heading 2°. Before the fix the pitch −18° case was hidden by the fixed band.
+
+## v0.1.24 — parking lots
+
+- `npm test`: 85 passed. The extras test now checks that curb strips come last, in whole quads, and that parking uv spans the lot. `tests/scene.html?x=-11.5&y=108.8&h=161` (the user's reported view) inspected level and at −15° pitch: stall rows aligned to the lot, curb edge against the sidewalk, lines fading with distance, no errors.

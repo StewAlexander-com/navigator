@@ -1,0 +1,16 @@
+<!doctype html><html><head><style>html,body,#map{margin:0;width:100%;height:100%}</style></head><body><div id="map"></div><script type="module">
+// Visual check of the bundled LA scene from any pose: ?x=&y=&h=&p= (local metres, heading and pitch in degrees).
+import * as maplibregl from 'maplibre-gl';
+import {createWorldLayer} from '../src/renderer.js';
+import {parseWorld,parseExtrasRaw,buildGeometry,buildSurfaces,nearTrees,ORIGIN,toLngLat} from '../src/world.js';
+const q=new URLSearchParams(location.search),player={x:+q.get('x')||0,y:+q.get('y')||0,heading:+(q.get('h')??38),pitch:+q.get('p')||0,travelBearing:0},metrics={renderedFrames:0};
+const world=parseWorld(await(await fetch('../osm-snapshot.json')).json()),extras=parseExtrasRaw(await(await fetch('../osm-extras.json')).json(),world.origin,world.buildings);
+const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#e6cca8'}}]},center:ORIGIN,zoom:18,pitch:90,maxPitch:95,centerClampedToGround:false,interactive:false,attributionControl:false,canvasContextAttributes:{antialias:false,preserveDrawingBuffer:true}});
+map.setVerticalFieldOfView(45);
+map.on('load',()=>{
+ const layer=createWorldLayer(player,metrics);map.addLayer(layer);layer.setRoads(world.roads.filter(r=>r.points.some(p=>Math.hypot(p[0]-player.x,p[1]-player.y)<250)));
+ layer.setBuildings({...buildGeometry(world,player.x,player.y),far:null});layer.setSurfaces(buildSurfaces(extras.areas,player.x,player.y,300));layer.setTrees(nearTrees(extras.trees,player.x,player.y,220));
+ const h=player.heading*Math.PI/180;map.jumpTo(map.calculateCameraOptionsFromTo(toLngLat(player.x,player.y),1.65,toLngLat(player.x+Math.sin(h)*20,player.y+Math.cos(h)*20),1.65+Math.tan(player.pitch*Math.PI/180)*20));
+ setTimeout(()=>window.sceneReady=true,1500);
+});
+</script></body></html>

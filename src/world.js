@@ -233,18 +233,32 @@ export function parseExtras(features, origin = ORIGIN, buildings = []) {
 }
 export function parseExtrasRaw(raw, origin = ORIGIN, buildings = []) {return parseExtras(osmtogeojson(raw, {flatProperties: true}).features, origin, buildings);}
 // Flat triangulated surfaces near (x, y), each at a tiny code-ordered height above the ground plane so overlaps never z-fight.
+// Surface parking (code 4) and plazas (code 5) also get a 0.4 m concrete curb strip (code 9) along their outer edge,
+// appended after every fill so painter's order puts it on top. Parking fills carry (along, across) uv in metres
+// relative to the lot's longest edge, which the shader uses to paint illustrative stall lines; OSM rarely maps stalls.
 export function buildSurfaces(areas, x, y, radius, maxVertices = 30000) {
-  const pos = [], style = []; let count = 0;
+  const pos = [], style = [], uv = [], curbs = []; let count = 0;
   for (const a of areas) {
     if (distanceToBox(a.bounds, x, y) > radius) continue;
     const vectors = a.rings.map(r => r.map(q => new Vector2(...q))), tris = ShapeUtils.triangulateShape(vectors[0], vectors.slice(1)), flat = a.rings.flat();
     if (pos.length / 3 + tris.length * 3 > maxVertices) break;
-    const z = -0.03 + a.code * 0.004;
-    for (const t of tris) for (const i of t) {pos.push(flat[i][0], flat[i][1], z); style.push(a.code, 0);}
+    let ox = 0, oy = 0, ux = 1, uy = 0;
+    if (a.code === 4) {
+      const r = a.rings[0]; let best = 0;
+      for (let k = 0; k < r.length; k++) {const p = r[k], q = r[(k + 1) % r.length], l = Math.hypot(q[0]-p[0], q[1]-p[1]); if (l > best) {best = l; ox = p[0]; oy = p[1]; ux = (q[0]-p[0]) / l; uy = (q[1]-p[1]) / l;}}
+    }
+    for (const t of tris) for (const i of t) {const [px, py] = flat[i]; pos.push(px, py, 0); style.push(a.code, 0); uv.push((px-ox)*ux + (py-oy)*uy, -(px-ox)*uy + (py-oy)*ux);}
+    if (a.code === 4 || a.code === 5) curbs.push(a.rings[0]);
     count++;
   }
+  for (const r of curbs) for (let k = 0; k < r.length; k++) {
+    const p = r[k], q = r[(k + 1) % r.length], dx = q[0]-p[0], dy = q[1]-p[1], l = Math.hypot(dx, dy);
+    if (l < .5 || pos.length / 3 + 6 > maxVertices) continue;
+    const nx = -dy / l * .2, ny = dx / l * .2, v = [[p[0]+nx, p[1]+ny], [p[0]-nx, p[1]-ny], [q[0]-nx, q[1]-ny], [q[0]+nx, q[1]+ny]];
+    for (const j of [0, 1, 2, 0, 2, 3]) {pos.push(v[j][0], v[j][1], 0); style.push(9, 0); uv.push(0, 0);}
+  }
   const n = pos.length / 3;
-  return {position: new Float32Array(pos), normal: new Float32Array(n * 3), uv: new Float32Array(n * 2), style: new Uint8Array(style), count};
+  return {position: new Float32Array(pos), normal: new Float32Array(n * 3), uv: new Float32Array(uv), style: new Uint8Array(style), count};
 }
 // Nearest trees to (x, y) within `radius`, at most `max`, packed [x, y, h, r, shape] × n.
 export function nearTrees(trees, x, y, radius, max = 700) {

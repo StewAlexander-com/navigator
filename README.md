@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.23 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.24 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,15 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Parking lots (v0.1.24)
+
+Much of the open ground downtown is surface parking. OSM usually tags it only `amenity=parking`, with no stalls, surface or markings. The lot south-east of 2nd and Spring is one example (way 1253399551, six points, no other tags). It used to render as a plain grey slab.
+
+- **Stalls (illustrative, like the windows).** The fill's uv is metres along and across the lot's longest edge. The road shader paints an 18 m module: two 5.5 m rows of 2.6 m bays either side of a 7 m aisle, with 12 cm faded-white lines, antialiased and faded out by 70 m, plus a faint oil band mid-bay. No geometry.
+- **Curbs.** Parking and plaza outlines get a 0.4 m concrete strip, drawn after every fill: 6 vertices per edge (about 5,700 for the 79 bundled lots when all are in range), inside the existing 30,000-vertex surface cap. Draw calls unchanged at 11.
+- Surfaces no longer need millimetre height offsets, since painter's order (v0.1.20) already decides what is on top.
+- `tests/scene.html?x=&y=&h=&p=` (dev server) renders the bundled LA scene from any pose.
 
 ### Street label follows the street in view (v0.1.23)
 

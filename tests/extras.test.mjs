@@ -18,7 +18,10 @@ test('surfaces are classified, planted areas get illustrative trees outside buil
  // Deterministic: the same input places the same trees.
  assert.deepEqual(parseExtras(f,undefined,[building]).trees,e.trees);
  const s=buildSurfaces(e.areas,0,0,300);assert.ok(s.count>=3);assert.equal(s.position.length/3*2,s.style.length);assert.ok(s.position.every(Number.isFinite));
- const zs=new Set();for(let i=2;i<s.position.length;i+=3)zs.add(+s.position[i].toFixed(3));assert.ok([...zs].every(z=>z<0),'surfaces sit below the road plane');
+ // Parking and plaza get curb strips (code 9) drawn after every fill; parking uv is metres in the lot frame.
+ const codes=[...s.style.filter((_,i)=>i%2===0)];const firstCurb=codes.indexOf(9);assert.ok(firstCurb>0&&codes.slice(firstCurb).every(c=>c===9),'curbs last');
+ assert.equal((codes.length-firstCurb)%6,0);assert.ok(s.uv.every(Number.isFinite));
+ const lotUv=[];codes.forEach((c,i)=>{if(c===4)lotUv.push(s.uv[i*2]);});assert.ok(Math.max(...lotUv)-Math.min(...lotUv)>39,'along axis spans the 40 m lot');
  const near=nearTrees(e.trees,0,0,120,10);assert.equal(near.length,50);
 });
 test('bundled LA extras parse within budget and roads carry one-way tags',()=>{

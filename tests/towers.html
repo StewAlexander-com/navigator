@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>Tower shapes</title><style>body{margin:0;background:#cfe0ea}</style>
+<script type="module">
+// Elevated check of v0.1.32 building shapes on the bundled LA snapshot: near geometry (parts, pyramid, crowns) on the
+// left half of the canvas, far-field silhouettes on the right. Plain Lambert shading; not the app's renderer.
+import * as THREE from 'three';import {parseWorld,buildGeometry,buildImpostors} from '../src/world.js';
+const world=parseWorld(await (await fetch('../osm-snapshot.json')).json());
+const r=new THREE.WebGLRenderer({antialias:true});r.setSize(innerWidth,innerHeight);document.body.append(r.domElement);
+const scene=new THREE.Scene();scene.add(new THREE.HemisphereLight(0xffffff,0x667788,1.1));const sun=new THREE.DirectionalLight(0xffffff,1.4);sun.position.set(-1,-2,3);scene.add(sun);
+const mesh=(g,color,dx)=>{const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(g.position,3));geo.setAttribute('normal',new THREE.BufferAttribute(g.normal,3));const m=new THREE.Mesh(geo,new THREE.MeshLambertMaterial({color,side:THREE.DoubleSide}));m.position.x=dx;scene.add(m);};
+const [nx,ny]=(new URLSearchParams(location.search).get('near')||'0,0').split(',').map(Number);mesh(buildGeometry(world,nx,ny,{vertices:200000,buildings:2000}),0xd9d2c5,0);
+mesh(buildImpostors(world,{vertices:20000,buildings:400}),0x9fb3c2,900);
+const cam=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,1,5000);cam.up.set(0,0,1);
+const at=new URLSearchParams(location.search).get('at')||'0,0';const [x,y]=at.split(',').map(Number);
+cam.position.set(x-260,y-420,330);cam.lookAt(x,y,40);r.render(scene,cam);window.done=true;
+</script>

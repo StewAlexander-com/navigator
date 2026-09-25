@@ -11,7 +11,7 @@ const distance=(b,x,y)=>Math.hypot(Math.max(b[0]-x,0,x-b[2]),Math.max(b[1]-y,0,y
 const bytes=g=>g.position.byteLength+g.normal.byteLength+g.uv.byteLength+g.style.byteLength;
 export function createChunkIndex(world,prepared=null){
  const index=new Map();
- if(prepared){for(const c of prepared)index.set(c.id,{id:c.id,x:c.x,y:c.y,bounds:c.bounds,buildings:c.buildingIndices.map(i=>world.buildings[i]),roads:c.roadSegments.map(([r,i])=>({points:[world.roads[r].points[i],world.roads[r].points[i+1]],width:world.roads[r].width,name:world.roads[r].name,highway:world.roads[r].highway,oneway:world.roads[r].oneway,lanes:world.roads[r].lanes,source:[r,i]}))});return index;}
+ if(prepared){for(const c of prepared)index.set(c.id,{id:c.id,x:c.x,y:c.y,bounds:c.bounds,buildings:c.buildingIndices.map(i=>world.buildings[i]),roads:c.roadSegments.map(([r,i])=>({points:[world.roads[r].points[i],world.roads[r].points[i+1]],width:world.roads[r].width,name:world.roads[r].name,highway:world.roads[r].highway,oneway:world.roads[r].oneway,lanes:world.roads[r].lanes,source:[r,i]}))});attachParts(index,world);return index;}
  function bucket(bounds){
   const cx=Math.floor((bounds[0]+bounds[2])/2/CHUNKS.size),cy=Math.floor((bounds[1]+bounds[3])/2/CHUNKS.size),id=`${cx}:${cy}`;
   let c=index.get(id);if(!c){c={id,x:(cx+.5)*CHUNKS.size,y:(cy+.5)*CHUNKS.size,bounds:[...bounds],buildings:[],roads:[]};index.set(id,c);}
@@ -22,7 +22,13 @@ export function createChunkIndex(world,prepared=null){
   const a=road.points[i-1],b=road.points[i],half=road.width/2;
   bucket([Math.min(a[0],b[0])-half,Math.min(a[1],b[1])-half,Math.max(a[0],b[0])+half,Math.max(a[1],b[1])+half]).roads.push({points:[a,b],width:road.width,name:road.name,highway:road.highway,oneway:road.oneway,lanes:road.lanes,source:[roadIndex,i-1]});
  }
- return index;
+ attachParts(index,world);return index;
+}
+// Building parts go to the chunk that holds their centre (or the nearest one), alongside that chunk's buildings.
+function attachParts(index,world){
+ for(const p of world.parts||[]){const cx=(p.bounds[0]+p.bounds[2])/2,cy=(p.bounds[1]+p.bounds[3])/2;let best=null,bd=Infinity;
+  for(const c of index.values()){const d=distance(c.bounds,cx,cy);if(d<bd){bd=d;best=c;}if(d===0)break;}
+  if(best)best.buildings.push(p);}
 }
 export function createChunkStream(world,graph=null){
  const index=createChunkIndex(world,graph?.chunks),lookup=graph?createSectorLookup(graph):null,cache=new Map();let loaded=0,evicted=0,hits=0,promoted=0,lastPrefetch=new Set(),lastActive=null;

@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.31 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.32 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,16 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Distinctive building shapes (v0.1.32)
+
+Real data first, then a small illustrative touch:
+
+- **Building parts (surveyed).** OSM `building:part` ways (Simple 3D Buildings) are each extruded from `min_height` (or `building:min_level` × 3.2 m) to `height`, styled like their outline. An outline with parts is drawn as its parts. In the bundled LA box, 11 outlines become 31 parts; City Hall now shows its stepped tower. Live areas now also request `building:part`.
+- **Roof shapes (surveyed).** `roof:shape` pyramidal/dome/onion/hipped/cone renders as a pyramid and `gabled` as a gable, with `roof:height` or a proportional default (a tagged height includes the roof). City Hall's 138 m tower ends in its pyramid.
+- **Tower crowns (illustrative).** A tower ≥ 45 m with no parts or roof shape gets one of three crowns, picked by a hash of its OSM id: a setback top (upper 14 %, inset 22 %), a windowless 4.5 m mechanical penthouse, or both. A crown is used only where it fits inside the footprint. In the LA box this applies to 8 towers (for example, City Hall East, Continental Building and The Trust Building).
+- **Skyline.** Far silhouettes carry the same shapes: each tower's crown, plus the two tallest parts of a multi-part building (with its pyramid), simplified to ≤ 10 points.
+- **Cost.** No new draw calls, textures or attributes. Near geometry is 6,891 vertices at the start (6,903 before, because outlines are replaced by parts). `tests/towers.html` renders an overhead check.
 
 ### Press-and-hold controls on phones (v0.1.31)
 

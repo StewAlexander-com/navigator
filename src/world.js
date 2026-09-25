@@ -28,6 +28,16 @@ export function height(tags, {residential = false, area = Infinity} = {}) {
 // True when OSM tags carry more than a name (address, type, levels, dates…); read by the building pills' ⓘ button.
 const INFO_TAGS=['addr:housenumber','addr:housename','addr:street','addr:block','addr:block_number','building:levels','height','start_date','architect','operator','website','wikipedia','wikidata','description','amenity','shop','office','tourism','heritage','opening_hours','building:use'];
 const hasInfoTags=t=>INFO_TAGS.some(k=>t[k])||(t.building&&!['yes','building'].includes(t.building));
+const pointInRing = (r, x, y) => {let inside = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) {const a = r[j], b = r[i]; if ((a[1] > y) !== (b[1] > y) && x < (b[0]-a[0]) * (y-a[1]) / (b[1]-a[1]) + a[0]) inside = !inside;} return inside;};
+const minHeight = (t, h) => {const m = parseFloat(t.min_height), l = parseFloat(t['building:min_level']); return Math.max(0, Math.min(h - .5, Number.isFinite(m) ? m : Number.isFinite(l) ? l * 3.2 : 0));};
+// OSM roof:shape → a cheap roof: pyramidal/dome/onion/hipped/cone become a pyramid (apex over the centroid), gabled
+// stays the gable; roof:height or a proportional default sets how tall it is. Anything else, or untagged, is flat.
+function roofOf(t, h) {
+  const shape = {pyramidal: 'pyramid', dome: 'pyramid', onion: 'pyramid', hipped: 'pyramid', cone: 'pyramid', gabled: 'gable'}[t['roof:shape']];
+  if (!shape) return null;
+  const rh = parseFloat(t['roof:height']);
+  return {shape, height: Math.min(h * .6, Number.isFinite(rh) && rh > 0 ? rh : h * (shape === 'pyramid' ? .18 : .12))};
+}
 const ringArea = points => Math.abs(points.reduce((sum, a, i) => {const b = points[(i + 1) % points.length]; return sum + a[0] * b[1] - b[0] * a[1];}, 0)) / 2;
 export function boundedPosition(x, y) {
   const length = Math.hypot(x, y);
@@ -85,13 +95,34 @@ export function parseWorld(raw, origin = ORIGIN) {
     const landuse=contextLanduse(zones,bounds),nearRoad=landuse?null:nearestRoadClass(bounds,roads);
     const residential=landuse==='residential'||(!landuse&&prior&&residentialRoads.has(nearRoad));
     const h=height(f.properties,{residential,area}),heightDefault=!hasHeightTag(f.properties);
-    buildings.push({rings,bounds,height:h,id:f.id,name:String(f.properties.name||'').slice(0,80),info:hasInfoTags(f.properties),kind:placeKind(f.properties),style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior})});
+    buildings.push({rings,bounds,height:h,roof:roofOf(f.properties,h),id:f.id,name:String(f.properties.name||'').slice(0,80),info:hasInfoTags(f.properties),kind:placeKind(f.properties),style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior})});
   }
   for(const b of buildings)b.frontEdge=storefrontEdge(b,roads);
+  // Simple 3D Buildings parts (v0.1.32): each `building:part` is its own extrusion from min_height (or
+  // building:min_level × 3.2 m) to its height, with its own roof shape, styled like the outline that contains it. An
+  // outline with parts is not drawn itself (the parts are), but keeps its role for labels, the indoor hint and the far
+  // field. Parts stay out of `world.buildings`, so the ingest-time sector graph for the bundled area is unchanged.
+  const parts=[];
+  for (const f of features) {
+    if (!f.properties['building:part'] || f.properties['building:part'] === 'no' || f.properties.building) continue;
+    const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [];
+    for (const poly of polys) {
+      const rings = poly.map(r => r.slice(0, -1).map(local)).filter(r => r.length >= 3);
+      if (!rings.length || rings.flat().length > 2000 || rings.flat().some(p => !p.every(Number.isFinite)) || parts.length >= 2000) continue;
+      const pts = rings[0], bounds = [Math.min(...pts.map(p=>p[0])), Math.min(...pts.map(p=>p[1])), Math.max(...pts.map(p=>p[0])), Math.max(...pts.map(p=>p[1]))];
+      const cx = (bounds[0]+bounds[2])/2, cy = (bounds[1]+bounds[3])/2;
+      const owner = buildings.find(b => cx >= b.bounds[0] && cx <= b.bounds[2] && cy >= b.bounds[1] && cy <= b.bounds[3] && pointInRing(b.rings[0], cx, cy));
+      const h = height(f.properties, {}), min = minHeight(f.properties, h);
+      if (h - min < .5) continue;
+      if (owner) {owner.hasParts = true; (owner.partList ||= []);}
+      const part = {rings, bounds, height: h, minHeight: min, roof: roofOf(f.properties, h - min), id: f.id, part: true, style: owner?.style || buildingStyle(f.properties, {height: h, area: ringArea(pts), heightDefault: !hasHeightTag(f.properties)}), frontEdge: -1};
+      parts.push(part); owner?.partList.push(part);
+    }
+  }
   if (!buildings.length) throw new Error('No usable building footprints returned.');
   const kinds=BUILDING_STYLES.map(()=>0);for(const b of buildings)kinds[b.style.kind]++;
   const extras = parseExtras(features, origin, buildings);
-  return {buildings, roads, origin, kinds, prior, areas: extras.areas, trees: extras.trees, places: extras.places, timestamp: raw.osm3s?.timestamp_osm_base || null};
+  return {buildings, parts, roads, origin, kinds, prior, areas: extras.areas, trees: extras.trees, places: extras.places, timestamp: raw.osm3s?.timestamp_osm_base || null};
 }
 function distanceToBox(b, x, y) {return Math.hypot(Math.max(b[0]-x, 0, x-b[2]), Math.max(b[1]-y, 0, y-b[3]));}
 // Gable over a four-point ring: ridge along the longer axis at `h + 0.29 × short side` (about a 30° pitch), two sloped
@@ -116,34 +147,74 @@ export function gableRoof(ring, h, triangle) {
   face(P[2], P[3], A); face(P[2], A, B);
   face(P[1], P[2], B); face(P[3], P[0], A);
 }
+// Towers without parts or a roof shape get one of three illustrative crowns, chosen by a hash of the OSM id so a
+// skyline is not uniform: a setback top (the upper 14 % inset 22 % toward the centre), a rooftop mechanical penthouse
+// (a windowless box, 35 % of the footprint's extent, 4.5 m tall), or both. Only where the inset stays inside the
+// footprint; like the windows, these are illustrative, not surveyed.
+export const TOWER = Object.freeze({height: 45, maxPoints: 40, setback: .86, inset: .78, penthouse: .35, penthouseHeight: 4.5});
+const idHash = id => {let h = 2166136261; for (const c of String(id)) {h ^= c.charCodeAt(0); h = Math.imul(h, 16777619);} return (h >>> 0) / 4294967296;};
+export function towerCrown(b) {
+  if (b.part || b.hasParts || b.roof || b.height < TOWER.height || b.rings.length !== 1 || b.rings[0].length > TOWER.maxPoints) return null;
+  const r = b.rings[0], cx = r.reduce((s, p) => s + p[0], 0) / r.length, cy = r.reduce((s, p) => s + p[1], 0) / r.length;
+  if (!pointInRing(r, cx, cy)) return null;
+  const v = Math.floor(idHash(b.id) * 3), inset = r.map(([x, y]) => [cx + (x - cx) * TOWER.inset, cy + (y - cy) * TOWER.inset]);
+  const setback = v !== 1 && inset.every(p => pointInRing(r, p[0], p[1])) ? inset : null;
+  const [a0, c0, a1, c1] = b.bounds, hw = (a1 - a0) * TOWER.penthouse / 2, hh = (c1 - c0) * TOWER.penthouse / 2;
+  const box = [[cx-hw, cy-hh], [cx+hw, cy-hh], [cx+hw, cy+hh], [cx-hw, cy+hh]];
+  const penthouse = v !== 0 && box.every(p => pointInRing(setback || r, p[0], p[1])) ? box : null;
+  return setback || penthouse ? {setback, penthouse} : null;
+}
 export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
   const pos = [], normal = [], uv = [], styles=[];let code=0,floor=32;
   function triangle(a,b,c,n,ta=[0,0],tb=[0,0],tc=[0,0]) {pos.push(...a,...b,...c); normal.push(...n,...n,...n); uv.push(...ta,...tb,...tc);styles.push(code,floor,code,floor,code,floor);}
-  const candidates = world.buildings.filter(b => distanceToBox(b.bounds,x,y) <= LIMITS.radius).sort((a,b)=>distanceToBox(a.bounds,x,y)-distanceToBox(b.bounds,x,y));
+  // Walls of every ring from z0 to z1 (uv keeps the façade grid continuous with height), then a roof at z1: flat,
+  // or a pyramid of `rise` over the ring's centroid.
+  function walls(b, rings, z0, z1, front = true) {
+    for(const ring of rings) for(let i=0;i<ring.length;i++) {
+      // +8 marks the street-facing shopfront edge, +16 a home's street-facing door edge; both leave the style kind in the low bits.
+      code=(b.style?.kind||0)+(front&&rings===b.rings&&ring===rings[0]&&i===b.frontEdge?(b.style?.storefront?8:16):0);
+      const a = ring[i], b2 = ring[(i+1)%ring.length], dx=b2[0]-a[0], dy=b2[1]-a[1], l=Math.hypot(dx,dy);
+      if(l<0.01) continue;
+      const n=[dy/l,-dx/l,0], p=[...a,z0], q=[...b2,z0], r=[...b2,z1], s=[...a,z1];
+      triangle(p,q,r,n,[0,z0],[l,z0],[l,z1]); triangle(p,r,s,n,[0,z0],[l,z1],[0,z1]);
+    }
+    code=b.style?.kind||0;
+  }
+  function roof(rings, z, rise = 0) {
+    if (rise > 0 && rings.length === 1) {
+      const r = rings[0], cx = r.reduce((s, p) => s + p[0], 0) / r.length, cy = r.reduce((s, p) => s + p[1], 0) / r.length, apex = [cx, cy, z + rise];
+      for (let i = 0; i < r.length; i++) {const a = [...r[i], z], c = [...r[(i+1)%r.length], z], u = [c[0]-a[0], c[1]-a[1], 0], w = [apex[0]-a[0], apex[1]-a[1], rise];
+        let n = [u[1]*w[2]-u[2]*w[1], u[2]*w[0]-u[0]*w[2], u[0]*w[1]-u[1]*w[0]]; const l = Math.hypot(...n) || 1; n = n.map(v => v / l); if (n[2] < 0) n = n.map(v => -v); triangle(a, c, apex, n);}
+      return;
+    }
+    const vectors = rings.map(r=>r.map(p=>new Vector2(...p))), tris = ShapeUtils.triangulateShape(vectors[0], vectors.slice(1)), flat = rings.flat();
+    for(const t of tris) triangle(...t.map(i=>[...flat[i],z]),[0,0,1]);
+  }
+  const pool = world.parts?.length ? [...world.buildings, ...world.parts] : world.buildings;
+  const candidates = pool.filter(b => !b.hasParts && distanceToBox(b.bounds,x,y) <= LIMITS.radius).sort((a,b)=>distanceToBox(a.bounds,x,y)-distanceToBox(b.bounds,x,y));
   let count = 0, simplified = 0;
   for (const b of candidates) {
     if (count >= budget.buildings) break;
     let rings = b.rings;code=b.style?.kind||0;floor=Math.round((b.style?.floorHeight||3.2)*10);
-    const required = rings.reduce((s,r)=>s+r.length*9,0)+rings.length*6;
+    const required = rings.reduce((s,r)=>s+r.length*9,0)+rings.length*6+48;
     if (pos.length/3 + required > budget.vertices) {
       const [a,c,d,e] = b.bounds; rings = [[[a,c],[d,c],[d,e],[a,e]]]; simplified++;
       if (pos.length/3 + 36 > budget.vertices) break;
     }
-    // Illustrative gable on small rectangular homes (four-point outer ring, ≤ 250 m², not simplified); everything else keeps its flat roof.
-    if (b.style?.kind===1 && rings===b.rings && rings.length===1 && rings[0].length===4 && ringArea(rings[0])<=250) gableRoof(rings[0], b.height, triangle);
-    else {
-      const vectors = rings.map(r=>r.map(p=>new Vector2(...p)));
-      const roof = ShapeUtils.triangulateShape(vectors[0], vectors.slice(1));
-      const flat = rings.flat();
-      for(const t of roof) triangle(...t.map(i=>[...flat[i],b.height]),[0,0,1]);
-    }
-    for(const ring of rings) for(let i=0;i<ring.length;i++) {
-      // +8 marks the street-facing shopfront edge, +16 a home's street-facing door edge; both leave the style kind in the low bits.
-      code=(b.style?.kind||0)+(rings===b.rings&&ring===rings[0]&&i===b.frontEdge?(b.style?.storefront?8:16):0);
-      const a = ring[i], b2 = ring[(i+1)%ring.length], dx=b2[0]-a[0], dy=b2[1]-a[1], l=Math.hypot(dx,dy);
-      if(l<0.01) continue;
-      const n=[dy/l,-dx/l,0], p=[...a,0], q=[...b2,0], r=[...b2,b.height], s=[...a,b.height];
-      triangle(p,q,r,n,[0,0],[l,0],[l,b.height]); triangle(p,r,s,n,[0,0],[l,b.height],[0,b.height]);
+    const base = b.minHeight || 0, top = b.height, crown = rings === b.rings ? towerCrown(b) : null;
+    // Illustrative gable on small rectangular homes (four-point outer ring, ≤ 250 m², not simplified); a tagged gabled
+    // roof on any four-point ring uses the same gable. Everything else: pyramid when tagged, otherwise flat.
+    if (rings === b.rings && rings.length === 1 && rings[0].length === 4 && ((b.style?.kind===1 && !b.roof && ringArea(rings[0])<=250) || b.roof?.shape === 'gable')) {walls(b, rings, base, top); gableRoof(rings[0], top, triangle);}
+    else if (crown?.setback) {
+      const split = base + (top - base) * TOWER.setback;
+      walls(b, rings, base, split); roof(rings, split); walls(b, [crown.setback], split, top, false);
+      if (crown.penthouse) {roof([crown.setback], top); code = 5; walls({style: {kind: 5}}, [crown.penthouse], top, top + TOWER.penthouseHeight, false); roof([crown.penthouse], top + TOWER.penthouseHeight);}
+      else roof([crown.setback], top);
+    } else {
+      // A tagged height includes its roof, so a pyramid's eaves sit `roof:height` below it.
+      const rise = rings === b.rings && b.roof?.shape === 'pyramid' ? b.roof.height : 0;
+      walls(b, rings, base, top - rise); roof(rings, top - rise, rise);
+      if (crown?.penthouse) {code = 5; walls({style: {kind: 5}}, [crown.penthouse], top, top + TOWER.penthouseHeight, false); roof([crown.penthouse], top + TOWER.penthouseHeight);}
     }
     count++;
   }
@@ -168,21 +239,39 @@ export function buildImpostors(world, budget = {vertices: 3000, buildings: 64}, 
   const pos = [], normal = [], uv = [], styles = []; let code = 0;
   const triangle = (a, b, c, n) => {pos.push(...a, ...b, ...c); normal.push(...n, ...n, ...n); uv.push(0,0,0,0,0,0); styles.push(code,32,code,32,code,32);};
   let count = 0, fallback = 0;
+  // Walls from z0 to z1 and a cap: `roof` triangles, null (triangulate), or 'pyramid' rising `rise` over the centroid.
+  function prism(ring, roof, z0, z1, rise = 0) {
+    if (roof === 'pyramid') {const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length, cy = ring.reduce((s, p) => s + p[1], 0) / ring.length;
+      for (let i = 0; i < ring.length; i++) {const a = ring[i], c = ring[(i+1)%ring.length], mx = (a[0]+c[0])/2 - cx, my = (a[1]+c[1])/2 - cy, l = Math.hypot(mx, my, rise) || 1; triangle([...a, z1], [...c, z1], [cx, cy, z1 + rise], [mx/l, my/l, Math.hypot(mx, my)/l]);}}
+    else {const tris = roof || ShapeUtils.triangulateShape(ring.map(p => new Vector2(...p)), []); for (const t of tris) triangle(...t.map(i => [...ring[i], z1]), [0, 0, 1]);}
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], c = ring[(i + 1) % ring.length], dx = c[0]-a[0], dy = c[1]-a[1], l = Math.hypot(dx, dy);
+      if (l < 0.01) continue;
+      const n = [dy/l, -dx/l, 0], p = [...a, z0], q = [...c, z0], r = [...c, z1], s = [...a, z1];
+      triangle(p, q, r, n); triangle(p, r, s, n);
+    }
+  }
   for (const b of world.buildings) {
     if (count >= budget.buildings) break;
+    if (b.part) continue; // the far field uses the outline's silhouette, not its parts
     code = b.style?.kind || 0;
     let ring = simplifyRing(b.rings[0], tolerance, maxPoints), roof = ShapeUtils.triangulateShape(ring.map(p => new Vector2(...p)), []);
     if (!roof.length) {const [a, c, d, e] = b.bounds; ring = [[a,c],[d,c],[d,e],[a,e]]; roof = [[0,1,2],[0,2,3]]; fallback++;}
     if (pos.length / 3 + ring.length * 6 + roof.length * 3 > budget.vertices) break;
     const len = (p, q) => Math.hypot(q[0]-p[0], q[1]-p[1]), o = b.rings[0];
     const gabled = b.style?.kind === 1 && b.rings.length === 1 && o.length === 4 && ringArea(o) <= 250;
-    const h = gabled ? b.height + GABLE_RISE * Math.min(len(o[0], o[1]), len(o[1], o[2])) / 2 : b.height;
-    for (const t of roof) triangle(...t.map(i => [...ring[i], h]), [0, 0, 1]);
-    for (let i = 0; i < ring.length; i++) {
-      const a = ring[i], c = ring[(i + 1) % ring.length], dx = c[0]-a[0], dy = c[1]-a[1], l = Math.hypot(dx, dy);
-      if (l < 0.01) continue;
-      const n = [dy/l, -dx/l, 0], p = [...a, 0], q = [...c, 0], r = [...c, h], s = [...a, h];
-      triangle(p, q, r, n); triangle(p, r, s, n);
+    const crown = towerCrown(b);
+    const h = gabled ? b.height + GABLE_RISE * Math.min(len(o[0], o[1]), len(o[1], o[2])) / 2 : crown?.setback ? b.height * TOWER.setback : b.height;
+    prism(ring, roof, 0, h);
+    // Skyline shapes are what the far field is for: a tower's crown, and the two tallest parts of a multi-part building
+    // (a pyramid where tagged), each simplified to ≤ maxPoints. Everything else stays one block.
+    if (crown?.setback) {const r = simplifyRing(crown.setback, tolerance, maxPoints); prism(r, null, h, b.height);}
+    if (crown?.penthouse) {code = 5; prism(crown.penthouse, [[0,1,2],[0,2,3]], b.height, b.height + TOWER.penthouseHeight); code = b.style?.kind || 0;}
+    for (const p of (b.partList || []).filter(p => p.height > h + 3).sort((a, c) => c.height - a.height).slice(0, 2)) {
+      const r = simplifyRing(p.rings[0], tolerance, maxPoints);
+      if (pos.length / 3 + r.length * 12 > budget.vertices) break;
+      const rise = p.roof?.shape === 'pyramid' ? p.roof.height : 0;
+      prism(r, rise ? 'pyramid' : null, h, p.height - rise, rise);
     }
     count++;
   }

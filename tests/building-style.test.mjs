@@ -78,7 +78,19 @@ test('the real Mebane square becomes mostly homes while the bundled Los Angeles 
  assert.ok(m.buildings.filter(b=>b.style.kind===6).every(b=>b.style.evidence!=='footprint inference'));
  const la=parseWorld(JSON.parse(fs.readFileSync(new URL('../public/osm-snapshot.json',import.meta.url))));
  assert.deepEqual(la.kinds,[47,0,26,28,3,13,5]);assert.equal(la.prior,false);assert.ok(la.buildings.every(b=>b.style.evidence!=='footprint inference'));
- assert.equal(buildGeometry(la,0,0).position.length/3,6903);
+ // v0.1.32: 11 outlines are drawn as their 31 parts, and 8 part-less towers get an illustrative crown.
+ assert.equal(buildGeometry(la,0,0).position.length/3,6891);
+});
+test('building parts, tagged roofs and tower crowns',async()=>{
+ const {towerCrown,TOWER}=await import('../src/world.js');
+ const la=parseWorld(JSON.parse(fs.readFileSync(new URL('../public/osm-snapshot.json',import.meta.url))));
+ assert.equal(la.parts.length,31);assert.equal(la.buildings.filter(b=>b.hasParts).length,11);
+ assert.ok(la.parts.every(p=>p.height>p.minHeight&&p.style));
+ const pyr=la.parts.find(p=>p.roof?.shape==='pyramid');assert.ok(pyr&&pyr.height>130,'the 138 m pyramidal tower part');
+ const crowns=la.buildings.map(towerCrown).filter(Boolean);assert.equal(crowns.length,8);
+ assert.ok(la.buildings.filter(towerCrown).every(b=>b.height>=TOWER.height&&!b.hasParts));
+ const sq={rings:[[[0,0],[30,0],[30,30],[0,30]]],bounds:[0,0,30,30],height:60,style:{kind:3}};
+ assert.equal(towerCrown({...sq,height:30,id:'way/1'}),null,'short buildings stay plain');assert.equal(towerCrown({...sq,id:'way/1',roof:{shape:'pyramid',height:5}}),null,'tagged roofs win');
 });
 test('rectangular homes get a gable roof within the vertex estimate; other footprints and styles keep flat roofs',()=>{
  const ring=[[0,0],[14,0],[14,10],[0,10]],home={rings:[ring],bounds:[0,0,14,10],height:6.5,style:{kind:1,floorHeight:2.9,storefront:false},frontEdge:0,id:'h'};

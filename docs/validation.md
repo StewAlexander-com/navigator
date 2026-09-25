@@ -265,3 +265,8 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 ## v0.1.31 — press-and-hold controls on phones
 
 - `npm test`: 94 passed. Preview build, Playwright iPhone 13 emulation with touch: a 2.5 s touch hold on Move forward kept the button active, moved the view, created no text selection, and released cleanly. The computed styles were `user-select: none` and `touch-action: none`. The iOS callout itself cannot be observed in Chromium, so this needs confirming on the phone.
+
+## v0.1.32 — distinctive building shapes
+
+- `npm test`: 95 passed. New checks: 31 parts and 11 outlines with parts; the 138 m pyramidal part; 8 crowns, all on part-less towers ≥ 45 m; short buildings and tagged roofs stay plain. The start-view vertex count is 6,891 (was 6,903).
+- `tests/towers.html` (overhead, Lambert shading): City Hall's stepped tower and pyramid appear both near and in the far field; City Hall East shows a setback and a penthouse. The app loaded with no page errors.

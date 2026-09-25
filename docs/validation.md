@@ -261,3 +261,7 @@ Recorded 2026-09-24 on Linux (sandbox, headless Chromium with software GL).
 
 - `npm test`: 94 passed (range fixtures updated: food beyond 85 m, landmark within 150 m).
 - Dev server, bundled LA, ten poses: names at 4 of 10, at most one at a time. At the start pose, "(abeautifullife) Jamaican" shows; "The Blue Cube" stays hidden because it would have to move more than 48 px around the street pill. Fixed: a cached empty pick from before the scene was ready.
+
+## v0.1.31 — press-and-hold controls on phones
+
+- `npm test`: 94 passed. Preview build, Playwright iPhone 13 emulation with touch: a 2.5 s touch hold on Move forward kept the button active, moved the view, created no text selection, and released cleanly. The computed styles were `user-select: none` and `touch-action: none`. The iOS callout itself cannot be observed in Chromium, so this needs confirming on the phone.

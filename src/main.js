@@ -367,6 +367,12 @@ function stop(){if(drag){const id=drag.id;drag=null;if($('map').hasPointerCaptur
 const supported=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','ArrowUp','ArrowDown']);
 addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('place-dialog').open||$('edge-dialog').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);addEventListener('focus',start);
 document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();positioning.pause();roadWorker?.postMessage({type:'pause'});}else{positioning.resume();if(roadCacheEnabled&&!roadHold)roadWorker?.postMessage({type:'resume'});start();}});
+// Long-press on a hold button (or the 3D view) must not open the context menu, start a selection, or fire a click on
+// release that re-triggers the button; the pointer handlers below are the only input path.
+for(const el of [...document.querySelectorAll('[data-key]'),$('map')]){el.addEventListener('contextmenu',e=>e.preventDefault());el.addEventListener('selectstart',e=>e.preventDefault());}
+for(const button of document.querySelectorAll('[data-key]')){button.addEventListener('click',e=>e.preventDefault());
+ // iOS starts its long-press text/callout gesture from touchstart; cancelling it (non-passive) stops that while pointer events still fire.
+ button.addEventListener('touchstart',e=>{if(e.cancelable)e.preventDefault();},{passive:false});}
 for(const button of document.querySelectorAll('[data-key]')){button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);keys.add(button.dataset.key);button.classList.add('active');start();});button.addEventListener('lostpointercapture',()=>{keys.delete(button.dataset.key);button.classList.remove('active');});}
 // A compass-follow drag temporarily owns the view; release eases back to the latest sensor heading.
 $('map').addEventListener('pointerdown',e=>{if(!ready||drag||e.button!==0||!e.isPrimary)return;drag={x:e.clientX,y:e.clientY,id:e.pointerId};$('map').setPointerCapture(e.pointerId);applyMode();});

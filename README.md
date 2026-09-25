@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.30 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.31 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,13 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Press-and-hold controls on phones (v0.1.31)
+
+Holding a movement or turn button on a phone could start text selection on its arrow glyph. iOS then offered Copy / Look Up / Speak, showed the magnifier, or cancelled the hold.
+
+- **CSS:** the app UI is non-selectable with no touch callout (`user-select: none`, `-webkit-touch-callout: none`). Buttons use `touch-action: manipulation`, and the hold buttons use `none`. Dialogs and inputs keep normal selection, so addresses and details can still be copied.
+- **Events:** the hold buttons and the 3D view cancel `contextmenu` and `selectstart`. The hold buttons also cancel `touchstart` (non-passive), which is where iOS begins its long-press gesture; pointer events still drive the hold. Stray `click`s on release are ignored.
 
 ### Name ranges widened slightly (v0.1.30)
 

@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.32 · Prototype G** adds OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.33 · Prototype G** adds junction signposts, street-level pins and a session discovery trail on top of OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,18 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Wayfinding: signposts, street-level pins and discoveries (v0.1.33)
+
+![Signpost and pins modelled in Blender](docs/images/wayfinding-assets.png)
+
+Five ideas were weighed for making exploration more engaging on desktop and phone: junction signposts, markers for named places, an exploration trail, live time-of-day lighting and ambient traffic. Time of day and traffic were cut: the first conflicts with the art-directed light and the independent shadow check and hurts legibility at night; the second would be invented data and needs continuous frames, which costs phone battery. The three kept are blended by signal (usability, usefulness) over noise (clutter, cost), and fit inside the v0.1.29 name-pill budget rather than adding to it:
+
+- **Signposts.** Junctions are nodes shared by differently named carriageways in the loaded roads (merged within 15 m). Up to three within 110 m, those ahead first, get a post on the corner nearest you with blades along each street, abbreviated as on real signs (W 2nd St). Signs are 1.25× real size, illustrative like the windows. A sign is small from afar, so the street pill also reads **Crosses West 2nd Street · 52 m** for the next junction ahead on your street (hidden on screens under 520 px tall).
+- **Street-level pins.** No new names: each food or landmark name pill that is on screen (at most two) gets a pin on the pavement at its wall, amber for food, cyan for landmarks. The pin grows with distance but always tops out below 2.4 m, the lowest name height, so pin and name never overlap. Tap the pin for the same details card as the name's ⓘ.
+- **Discoveries and trail.** Coming within 20 m of a food place or landmark after moving marks it discovered (its pin dims). A new street flashes the street pill. Counts sit under the area name (under the minimap on phones) as a movable overlay, and the minimap draws your trail, the pinned places and the discovered ones. All of this is in memory for the session; nothing is stored or sent.
+
+Models: `scripts/blender/wayfinding.py` builds the signpost, blade and pin in Blender 5.2 (`Blender --background --factory-startup --python scripts/blender/wayfinding.py -- preview.png`) and exports `public/models/wayfinding.glb` (58 KiB, cached offline). Cost: up to three draw calls while shown (instanced pins, instanced poles, one merged blade mesh textured from one canvas atlas), so at most 14 world draw calls. Selection runs on the UI tick, junctions only when the road set changes, and nothing animates, so the render loop still idles.
 
 ### Distinctive building shapes (v0.1.32)
 

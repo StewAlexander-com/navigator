@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as maplibregl from 'maplibre-gl';
 import {ORIGIN, LIMITS} from './world.js';
 import {createChevron} from './chevron.js';
+import {createWayfinding} from './wayfinding.js';
 import {LOD} from './chunks.js';
 export const TREES=Object.freeze({max:700,radius:220});
 // Unit tree (1 m tall, crown radius 1): trunk to 40 % height, crown centred at 62 %. ~78 vertices, shared by every instance.
@@ -194,7 +195,7 @@ void main(){
  gl_FragColor=vec4(mix(color,fog,haze*.94),1.);
 }`;
 export function createWorldLayer(player, metrics, onChevronAnchor=null) {
-  let renderer, scene, camera, building, far, ground, roads, surfaces, trees, shadows, map, chevron;
+  let renderer, scene, camera, building, far, ground, roads, surfaces, trees, shadows, map, chevron, wayfinding;
   const anchor=new THREE.Vector4();
   const eye=new THREE.Vector2(), projection=new THREE.Matrix4(), localMatrix=new THREE.Matrix4();
   // Local metres → Mercator. Re-anchoring a GPS area moves the origin; geometry arrives already relative to it.
@@ -215,6 +216,7 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
       renderer=new THREE.WebGLRenderer({canvas:m.getCanvas(),context:gl});renderer.autoClear=false;
       ground=new THREE.Mesh(new THREE.PlaneGeometry(1200,1200),materials[1]);ground.position.z=-.04;ground.frustumCulled=false;ground.renderOrder=-3;scene.add(ground);
       chevron=createChevron(player);scene.add(chevron.group);metrics.chevron=chevron.diagnostics();
+      wayfinding=createWayfinding(scene,()=>map?.triggerRepaint());
     },
     setBuildings(data){
       if(building){scene.remove(building);building.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
@@ -229,6 +231,9 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
       }
       map.triggerRepaint();
     },
+    setBeacons(list){wayfinding?.setBeacons(list);},
+    setSigns(list){wayfinding?.setSigns(list);},
+    wayfindingState(){return wayfinding?.diagnostics()||null;},
     setRoads(data){
       if(roads){scene.remove(roads);roads.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
       // uv = (metres along the road, −1…1 across) and style = (surface, width × 10) let the shader paint markings.
@@ -273,6 +278,6 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
       metrics.drawCalls=renderer.info.render.calls;metrics.triangles=renderer.info.render.triangles;metrics.renderedFrames++;
       metrics.chevron.bearing=player.chevronHeading??player.heading;
     },
-    onRemove(){for(const object of [building,far,ground,roads,surfaces,trees,shadows])object?.geometry.dispose();chevron?.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
+    onRemove(){for(const object of [building,far,ground,roads,surfaces,trees,shadows])object?.geometry.dispose();chevron?.dispose();wayfinding?.dispose();materials.forEach(m=>m.dispose());renderer?.dispose();}
   };return layer;
 }

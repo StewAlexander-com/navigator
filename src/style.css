@@ -48,3 +48,11 @@ button{touch-action:manipulation}
 .controls button{touch-action:none}
 dialog,dialog *,input{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 dialog button{-webkit-user-select:none;user-select:none}
+
+/* Wayfinding (v0.1.33): cross-street line in the street pill, new-street flash, discovery counter (a movable overlay). */
+#street-next{display:block;margin-top:3px;font-size:10px;font-weight:550;letter-spacing:.2px;color:#bfeeed;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#street-next[hidden]{display:none}
+#street-pill.fresh{animation:street-fresh 1.6s ease-out}@keyframes street-fresh{0%{box-shadow:0 0 0 0 #75eee3aa,0 3px 14px #051d2430;border-color:#9ffff8}100%{box-shadow:0 0 0 14px #75eee300,0 3px 14px #051d2430}}
+#discovery{position:absolute;left:30px;top:226px;margin:0;padding:3px 9px;border-radius:10px;background:#15303acc;font-size:10px;color:#a9f0ea;letter-spacing:.2px;white-space:nowrap;pointer-events:none}#discovery[hidden]{display:none}
+@media(max-width:700px){#discovery{left:auto;right:17px;top:212px}#street-next{font-size:9px}}
+@media(max-height:520px) and (min-width:701px){#discovery{top:180px}#street-next{display:none!important}}
+@media(prefers-reduced-motion:reduce){#street-pill.fresh{animation:none}}

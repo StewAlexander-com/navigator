@@ -1,7 +1,7 @@
 import {readdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 const paths=await readdir('dist',{recursive:true});
-const files=paths.filter(p=>/\.(mjs|js|css|html|json|svg|png|webmanifest)$/.test(p)&&p!=='sw.js'&&p!=='reference-original.png');
+const files=paths.filter(p=>/\.(mjs|js|css|html|json|svg|png|glb|webmanifest)$/.test(p)&&p!=='sw.js'&&p!=='reference-original.png');
 const hash=createHash('sha256');for(const file of files.sort())hash.update(await readFile('dist/'+file));
 const version=hash.digest('hex').slice(0,12);
 await writeFile('dist/sw.js',`const CACHE='navigator-${version}';

@@ -10,7 +10,7 @@ import {nearestStreet,streetSegments,labelPoint} from './street-label.js';
 import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import {progressFraction, progressText, updateRate} from './progress.js';
 import {indoorVerdict, INDOOR} from './indoor.js';
-import {place, placedRect, overlapCount} from './layout.js';
+import {place, placedRect, overlapCount, intersects} from './layout.js';
 import {parseCoordinates,geocode,formatPoint} from './places.js';
 import {visibleLabels,infoRows,fetchInfo,LABELS} from './building-labels.js';
 import {WAYDATA,PIN_COLORS,findJunctions,pickSignposts,nextCrossing,pinPose,formatDistance} from './wayfinding-data.js';
@@ -207,18 +207,19 @@ function layoutOverlays(){
  overlays.obstacles=[...fixed,...placed];
  const street=$('street-pill');if(!street.hidden){overlays.streetSize={w:street.offsetWidth||overlays.streetSize.w,h:street.offsetHeight||overlays.streetSize.h};}
  const visible=[...placed,...(street.hidden||!overlays.street?[]:[overlays.street.rect])];
- overlays.fixedOverlaps=overlapCount(fixed);overlays.overlaps=overlapCount([...fixed,...visible])-overlays.fixedOverlaps;
+ overlays.fixedOverlaps=overlapCount(fixed);overlays.baseOverlaps=overlapCount([...fixed,...placed])-overlays.fixedOverlaps;overlays.overlaps=overlapCount([...fixed,...visible])-overlays.fixedOverlaps;
 }
 fitView();addEventListener('resize',fitView);
+if(window.ResizeObserver){const watch=new ResizeObserver(scheduleLayout);for(const el of [...document.querySelectorAll('.area,.bottom'),...MOVABLE.map(id=>$(id))])if(el)watch.observe(el);}
 map.on('load',()=>{worldLayer=createWorldLayer(player,metrics,project=>{
  // The street pill sits on the current street where the view meets it (labelPoint) and shows whenever that point is on
  // screen; the layout resolver nudges (or, with no room, shrinks) it off other overlays using the cached obstacle rects.
  placeBuildingPills(project);
  const pill=$('street-pill'),point=street?labelPoint(labelSegments,player):[player.x+Math.sin(player.heading*Math.PI/180)*4.5,player.y+Math.cos(player.heading*Math.PI/180)*4.5,1.65],anchor=point?project(...point):{visible:false};
- const margin=24;pill.hidden=!anchor.visible||anchor.x<margin||anchor.x>innerWidth-margin||anchor.y<margin||anchor.y>innerHeight-margin;overlays.labelPoint=point;if(pill.hidden){overlays.street=null;return;}
+ const margin=24;pill.hidden=!anchor.visible||anchor.x<margin||anchor.x>innerWidth-margin||anchor.y<margin||anchor.y>innerHeight-margin;overlays.labelPoint=point;if(pill.hidden){overlays.street=null;overlays.overlaps=overlays.baseOverlaps??overlays.overlaps;return;}
  anchor.y=Math.min(anchor.y,innerHeight-140);
  const {w,h}=overlays.streetSize,rect={x:anchor.x-w/2,y:anchor.y-h/2,w,h},p=place(rect,overlays.obstacles,{width:innerWidth,height:innerHeight});
- pill.style.left=anchor.x+'px';pill.style.top=(p.y+h/2)+'px';pill.style.scale=p.scale<1?String(p.scale):'';overlays.street={rect:placedRect(rect,p),scale:p.scale};
+ pill.style.left=anchor.x+'px';pill.style.top=(p.y+h/2)+'px';pill.style.scale=p.scale<1?String(p.scale):'';overlays.street={rect:placedRect(rect,p),scale:p.scale};overlays.overlaps=(overlays.baseOverlaps??0)+overlays.obstacles.filter(o=>intersects(overlays.street.rect,o)).length;
 });map.addLayer(worldLayer);camera();if(!startFromUrl())request();});
 map.on('error',e=>{console.error(e.error);notice('The 3D view encountered an error. Reload to try again.');});
 map.getCanvas().addEventListener('webglcontextlost',e=>{e.preventDefault();stop();notice('Graphics context lost. Reload the page to restore this area.');});
@@ -353,7 +354,7 @@ function updateWayfinding(){
  if(street?.name&&!way.streets.has(street.name)){way.streets.add(street.name);if(way.streets.size>1){const pill=$('street-pill');pill.classList.remove('fresh');void pill.offsetWidth;pill.classList.add('fresh');}}
  const next=nextCrossing(way.junctions,player,street?.name),line=next?`Crosses ${next.name} · ${formatDistance(next.distance)}`:'';
  if($('street-next').textContent!==line){$('street-next').textContent=line;$('street-next').hidden=!next;}
- const plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;$('discovery').hidden=false;$('discovery').textContent=`Discovered ${plural(way.streets.size,'street')} · ${plural(way.visited.size,'place')}`;
+ const plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;const found=`Discovered ${plural(way.streets.size,'street')} · ${plural(way.visited.size,'place')}`;if($('discovery').textContent!==found||$('discovery').hidden){$('discovery').hidden=false;$('discovery').textContent=found;scheduleLayout();}
 }
 function drawWayfindingMini(c,scale){
  if(way.trail.length>1){c.strokeStyle='#169fb0';c.globalAlpha=.85;c.lineWidth=2.6/scale;c.beginPath();way.trail.forEach((ll,i)=>{const [x,y]=toLocal(ll,area.origin);if(i)c.lineTo(x,y);else c.moveTo(x,y);});c.stroke();c.globalAlpha=1;}

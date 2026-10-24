@@ -30,11 +30,11 @@ test('v0.1.26 manual movement reaches the area edge (less a margin) and reports 
  [x,y,hit]=boundedToArea(450,-20,bbox,ORIGIN);assert.equal(hit,true);assert.ok(Math.abs(x-390)<1,`x ${x}`);assert.equal(y,-20);
  assert.ok(Math.abs(areaEdgeDistance(0,0,bbox,ORIGIN)-400)<1);assert.ok(areaEdgeDistance(0,395,bbox,ORIGIN)<6);
 });
-test('holding a move key ramps smoothly from walking pace to 7 mph in 2 s',async()=>{
- const {moveSpeed,MOVE}=await import('../src/world.js');
+test('holding a move key ramps to 7 mph in 2 s, then from 7 s to 15 mph by 10 s, smoothly',async()=>{
+ const {moveSpeed,MOVE}=await import('../src/world.js');const mph=v=>v/0.44704;
  assert.equal(moveSpeed(0),1.4);assert.equal(moveSpeed(undefined),1.4);
- assert.ok(Math.abs(moveSpeed(MOVE.rampS)/0.44704-7)<1e-9);assert.equal(moveSpeed(10),moveSpeed(MOVE.rampS));
- let last=MOVE.walk,distance=0;for(let t=0;t<=MOVE.rampS+1e-9;t+=1/60){const v=moveSpeed(t);assert.ok(v>=last);assert.ok(v-last<.05,`jump at ${t}`);last=v;distance+=v/60;}
- assert.ok(MOVE.rampS>=1.5&&MOVE.rampS<=3);
- assert.ok(Math.abs(distance-(1.4+MOVE.top)/2*MOVE.rampS)<.1,`ramp covers ${distance.toFixed(2)} m`);
+ assert.ok(Math.abs(mph(moveSpeed(MOVE.rampS))-7)<1e-9);assert.ok(Math.abs(mph(moveSpeed(MOVE.fastFrom))-7)<1e-9,'holds 7 mph until 7 s');
+ assert.ok(Math.abs(mph(moveSpeed(10))-15)<1e-9);assert.equal(moveSpeed(60),moveSpeed(10));
+ assert.ok(MOVE.rampS>=1.5&&MOVE.rampS<=3);assert.ok(MOVE.fastFrom>=7&&MOVE.fastFrom+MOVE.fastS<=10);
+ let last=MOVE.walk;for(let t=0;t<=12;t+=1/60){const v=moveSpeed(t);assert.ok(v>=last-1e-12);assert.ok(v-last<.06,`jump at ${t.toFixed(2)} s`);last=v;}
 });

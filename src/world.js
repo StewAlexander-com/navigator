@@ -3,6 +3,7 @@ import osmtogeojson from 'osmtogeojson';
 import {areaContext, isCountryside} from './context.js';
 import {climateProfile} from './climate.js';
 import {ShapeUtils, Vector2} from 'three';
+import {bridgePieces, emitBridge, emitShaped} from './structures.js';
 
 export const ORIGIN = [-118.2462058, 34.0510824];
 export const BBOX = [34.0477, -118.2490, 34.0538, -118.2417];
@@ -50,11 +51,13 @@ export function boundedPosition(x, y) {
   return length > LIMITS.movement ? [x * LIMITS.movement / length, y * LIMITS.movement / length] : [x, y];
 }
 // Manual movement speed (m/s) after holding a move key or arrow for `held` seconds: walking pace at first, so a tap is
-// a small step, then an ease-in-out ramp to 7 mph (3.13 m/s) over `rampS`.
-export const MOVE = Object.freeze({walk: 1.4, top: 7 * 0.44704, rampS: 2});
+// a small step, then an ease-in-out ramp to 7 mph (3.13 m/s) over `rampS`; held on from `fastFrom` s, a second ramp
+// over `fastS` s reaches 15 mph (6.71 m/s) for crossing an area quickly.
+const MPH = 0.44704, ease = t => {t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t);};
+export const MOVE = Object.freeze({walk: 1.4, top: 7 * MPH, rampS: 2, fast: 15 * MPH, fastFrom: 7, fastS: 3});
 export function moveSpeed(held) {
-  const t = Math.min(1, Math.max(0, (held || 0) / MOVE.rampS));
-  return MOVE.walk + (MOVE.top - MOVE.walk) * t * t * (3 - 2 * t);
+  const t = held || 0;
+  return MOVE.walk + (MOVE.top - MOVE.walk) * ease(t / MOVE.rampS) + (MOVE.fast - MOVE.top) * ease((t - MOVE.fastFrom) / MOVE.fastS);
 }
 // Manual exploration (v0.1.26) may walk to the edge of the loaded area, `margin` metres short of it, instead of the
 // old 120 m circle. Returns [x, y, hit] with `hit` true when the step was clamped at the edge.
@@ -110,6 +113,7 @@ export function parseWorld(raw, origin = ORIGIN) {
   // Country lanes are not 14 m boulevards: in a village or rural square the carriageway follows the road class, so only
   // secondary and larger roads (10 m and up) get painted centre lines.
   if(countryside)for(const r of roads){const w=COUNTRY_WIDTH[r.highway];if(w)r.width=w;}
+  const bridges=bridgePieces(roads);
   // Homes in a dry climate (adobe, Moroccan riads, outback houses) have flat roofs unless OSM tags a roof shape.
   const flatHomes=context.biome?.group==='arid';
   for (const {f,rings,bounds,area} of footprints) {
@@ -144,7 +148,7 @@ export function parseWorld(raw, origin = ORIGIN) {
   if (!buildings.length && !roads.length) throw new Error('No usable buildings or roads returned.');
   const kinds=BUILDING_STYLES.map(()=>0);for(const b of buildings)kinds[b.style.kind]++;
   const extras = parseExtras(features, origin, buildings, {context, roads});
-  return {buildings, parts, roads, origin, kinds, prior, context, areas: extras.areas, trees: extras.trees, places: extras.places, timestamp: raw.osm3s?.timestamp_osm_base || null};
+  return {buildings, parts, bridges, roads, origin, kinds, prior, context, areas: extras.areas, trees: extras.trees, places: extras.places, timestamp: raw.osm3s?.timestamp_osm_base || null};
 }
 function distanceToBox(b, x, y) {return Math.hypot(Math.max(b[0]-x, 0, x-b[2]), Math.max(b[1]-y, 0, y-b[3]));}
 // Gable over a four-point ring: ridge along the longer axis at `h + 0.29 × short side` (about a 30° pitch), two sloped
@@ -212,13 +216,18 @@ export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
     const vectors = rings.map(r=>r.map(p=>new Vector2(...p))), tris = ShapeUtils.triangulateShape(vectors[0], vectors.slice(1)), flat = rings.flat();
     for(const t of tris) triangle(...t.map(i=>[...flat[i],z]),[0,0,1]);
   }
-  const pool = world.parts?.length ? [...world.buildings, ...world.parts] : world.buildings;
-  const candidates = pool.filter(b => !b.hasParts && distanceToBox(b.bounds,x,y) <= LIMITS.radius).sort((a,b)=>distanceToBox(a.bounds,x,y)-distanceToBox(b.bounds,x,y));
+  const pool = [...world.buildings, ...(world.parts || []), ...(world.bridges || [])];
+  const emit = (a, b2, c, n, k, ta, tb, tc) => {code = k; triangle(a, b2, c, n, ta, tb, tc);};
+  // Bridge decks first and outside the building count, so a chunk's building budget is unchanged.
+  for (const p of pool) if (p.bridge && distanceToBox(p.bounds, x, y) <= LIMITS.radius && pos.length / 3 + p.points.length * 90 <= budget.vertices) {floor = Math.min(255, Math.round(p.width * 10)); emitBridge(p, emit);}
+  // Landmark shapes (churches, mosques, temples…) come first, so a chunk's building cap never drops them.
+  const candidates = pool.filter(b => !b.bridge && !b.hasParts && distanceToBox(b.bounds,x,y) <= LIMITS.radius).sort((a,b)=>!!b.style?.shape-!!a.style?.shape||distanceToBox(a.bounds,x,y)-distanceToBox(b.bounds,x,y));
   let count = 0, simplified = 0;
   for (const b of candidates) {
     if (count >= budget.buildings) break;
     let rings = b.rings;code=b.style?.kind||0;floor=Math.round((b.style?.floorHeight||3.2)*10);
-    const required = rings.reduce((s,r)=>s+r.length*9,0)+rings.length*6+48;
+    const required = rings.reduce((s,r)=>s+r.length*9,0)+rings.length*6+48+(b.style?.shape?1200:0);
+    if (b.style?.shape && pos.length/3 + required <= budget.vertices && emitShaped(b, emit)) {count++; continue;}
     if (pos.length/3 + required > budget.vertices) {
       const [a,c,d,e] = b.bounds; rings = [[[a,c],[d,c],[d,e],[a,e]]]; simplified++;
       if (pos.length/3 + 36 > budget.vertices) break;
@@ -273,10 +282,14 @@ export function buildImpostors(world, budget = {vertices: 3000, buildings: 64}, 
       triangle(p, q, r, n); triangle(p, r, s, n);
     }
   }
+  const emit = (a, b2, c, n, k) => {code = k; triangle(a, b2, c, n);};
+  for (const p of [...world.buildings.filter(b => b.bridge), ...(world.bridges || [])]) if (pos.length / 3 + p.points.length * 30 <= budget.vertices) emitBridge(p, emit, false);
   for (const b of world.buildings) {
     if (count >= budget.buildings) break;
-    if (b.part) continue; // the far field uses the outline's silhouette, not its parts
+    if (b.part || b.bridge) continue; // the far field uses the outline's silhouette, not its parts
     code = b.style?.kind || 0;
+    // Spires, domes and minarets are skyline shapes too: shaped buildings keep their massing, at fewer segments.
+    if (b.style?.shape && pos.length / 3 + 700 <= budget.vertices && emitShaped(b, emit, 8)) {count++; continue;}
     let ring = simplifyRing(b.rings[0], tolerance, maxPoints), roof = ShapeUtils.triangulateShape(ring.map(p => new Vector2(...p)), []);
     if (!roof.length) {const [a, c, d, e] = b.bounds; ring = [[a,c],[d,c],[d,e],[a,e]]; roof = [[0,1,2],[0,2,3]]; fallback++;}
     if (pos.length / 3 + ring.length * 6 + roof.length * 3 > budget.vertices) break;

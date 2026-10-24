@@ -48,7 +48,23 @@ export function buildingStyle(tags,{landuse=null,height=12,area=0,heightDefault=
  const levels=Number(tags['building:levels']);
  // Homes without a level count get 2.9 m floors; every other untagged style keeps 3.2 m.
  const floorHeight=Number.isFinite(levels)&&levels>0?Math.max(2.4,Math.min(6,height/levels)):kind===1?2.9:3.2;
- return {kind,evidence,storefront:kind===3||(shop&&[0,1,2,4].includes(kind)),floorHeight};
+ const shape=buildingShape(tags);
+ return {kind,evidence,storefront:kind===3||(shop&&[0,1,2,4].includes(kind)),floorHeight,...(shape?{shape,tagged:!heightDefault}:{})};
+}
+// Landmark massing (structures.js) from the building type, or from a place of worship's religion on a generic
+// footprint. Hindu and Jain temples are towers of a different form, so they keep the ordinary extrusion.
+const WORSHIP={christian:'church',muslim:'mosque',buddhist:'temple',shinto:'temple',taoist:'temple'};
+export function buildingShape(tags){
+ const b=String(tags.building||'').toLowerCase(),religion=String(tags.religion||'').toLowerCase();
+ if(['church','cathedral','chapel','basilica'].includes(b))return 'church';
+ if(b==='mosque')return 'mosque';
+ if(['temple','shrine','pagoda'].includes(b))return ['hindu','jain'].includes(religion)?null:'temple';
+ if(tags.amenity==='place_of_worship'&&['yes','building','religious','civic'].includes(b)&&WORSHIP[religion])return WORSHIP[religion];
+ if(['industrial','warehouse','factory','manufacture','hangar'].includes(b))return 'industrial';
+ if(['barn','cowshed','stable'].includes(b))return 'barn';
+ if(b==='silo'||tags.man_made==='silo')return 'silo';
+ if(['storage_tank','tank','gasometer'].includes(b)||['storage_tank','gasometer'].includes(tags.man_made))return 'tank';
+ return null;
 }
 // Class of the nearest road (not footway/steps/path/cycleway) whose segment passes within `reach` of the footprint bounds.
 // 60 m rather than the 35 m shopfront search: houses sit further back from the centreline than shopfronts do.

@@ -4,6 +4,7 @@ import {ORIGIN, LIMITS} from './world.js';
 import {createChevron} from './chevron.js';
 import {createWayfinding} from './wayfinding.js';
 import {LOD} from './chunks.js';
+import {underDeck} from './structures.js';
 export const TREES=Object.freeze({max:700,radius:220});
 // Unit tree (1 m tall, crown radius 1): trunk to 40 % height, crown centred at 62 %. ~78 vertices, shared by every instance.
 function treeModel(){
@@ -82,16 +83,20 @@ void main(){
   float light=max(dot(n,sun),0.);
   // Neutral stone: warmth comes from incident sunlight, not a brown base pigment.
   vec3 illumination=vec3(.65,.69,.75)+vec3(.38,.31,.20)*light;
-  color=vec3(.83,.84,.85)*illumination;
+  // Style codes below 32: the low three bits are the style kind, 8 marks a street-facing shopfront edge, 16 a home's
+  // street-facing door edge. From 32 (structures.js): 7 bridge deck, 8 concrete, 9 stone, 10 slate, 11 dome, 12 metal
+  // roof, 13 roof tile, 14 tank metal, 15 timber.
+  float type=buildingStyle.x>31.5?buildingStyle.x-25.:mod(buildingStyle.x,8.);
+  float flag=buildingStyle.x>31.5?0.:floor(buildingStyle.x/8.+.001);
+  vec3 albedo=vec3(.83,.84,.85);
+  if(type>6.5)albedo=type<7.5?(n.z>.6?vec3(.33,.33,.31):vec3(.62,.61,.58)):type<8.5?vec3(.70,.69,.65):type<9.5?vec3(.80,.74,.63):type<10.5?vec3(.34,.37,.42):type<11.5?vec3(.70,.75,.74):type<12.5?vec3(.70,.72,.73):type<13.5?vec3(.30,.27,.26):type<14.5?vec3(.82,.82,.80):vec3(.52,.36,.26);
+  color=albedo*illumination;
   float stoneHighlight=pow(max(dot(n,normalize(sun+view)),0.),20.)*light;
   color+=vec3(.16,.14,.10)*stoneHighlight;
   color*=mix(.72,1.,smoothstep(0.,5.,local.z));
-  // Low three bits: style kind. 8: street-facing shopfront edge. 16: a home's street-facing door edge.
-  float type=mod(buildingStyle.x,8.);
-  float flag=floor(buildingStyle.x/8.+.001);
   // Homes get a darker roof (flat or gabled) so the roofline reads against pale walls.
   if(abs(n.z)>=.5&&type>.5&&type<1.5)color*=vec3(.60,.55,.52);
-  if(abs(n.z)<.5&&detail>0.){
+  if(type<6.5&&abs(n.z)<.5&&detail>0.){
    float floorH=max(2.4,buildingStyle.y*.1);
    float bay=type<.5?4.8:type<1.5?3.8:type<2.5?3.2:type<3.5?4.2:type<4.5?2.8:type<5.5?6.:4.5;
    vec2 cell=fract(facade/vec2(bay,floorH));
@@ -135,6 +140,28 @@ void main(){
    }
    color=mix(color,glass,window);
    color*=1.-.12*step(.96,cell.y)*detail;
+  }else if(type>6.5&&detail>0.){
+   // Deck asphalt grain; concrete formwork joints every 3 m; slate and tile courses; metal roof ribs; tank seams.
+   if(type<7.5&&n.z>.6){color*=1.+(grain(floor(local.xy*14.))-.5)*.06*detail;
+    // A deck at least 10 m wide keeps its road's double yellow centre line (style y is the deck width × 10).
+    float width=buildingStyle.y*.1,a=abs(facade.y*width*.5),aa=max(fwidth(facade.y*width*.5),1e-4);
+    if(width>9.5)color=mix(color,vec3(.80,.66,.25)*illumination*.8,smoothstep(.08-aa,.08+aa,a)*(1.-smoothstep(.2-aa,.2+aa,a))*.85*detail);}
+   else if(type<8.5&&abs(n.z)<.5)color*=1.-.10*step(.96,fract(facade.x/3.))*detail;
+   else if(type<9.5&&abs(n.z)<.5){
+    // Coursed stone and one tall lancet window per 4 m bay (2.2–8 m up, repeating every 12 m up a tower), its
+    // pointed head two arcs meeting at the top.
+    color*=1.-.05*step(.92,fract(local.z/.6))*detail;
+    float x=abs(fract(facade.x/4.)-.5)*4.,z=mod(local.z,12.),w=.45,top=8.,spring=top-w*1.6;
+    float arch=z<spring?1.:step(x,w*sqrt(max(0.,1.-pow((z-spring)/(top-spring),2.)))*(1.-.35*(z-spring)/(top-spring)));
+    float lancet=step(x,w)*arch*step(2.2,z)*step(z,top)*step(1.,local.z);
+    color=mix(color,mix(vec3(.13,.15,.22),vec3(.36,.29,.20),.35*grain(floor(local.xy*3.)))*illumination*.85,lancet*detail);
+   }
+   else if((type>9.5&&type<10.5)||(type>12.5&&type<13.5))color*=1.-.12*step(.75,fract(local.z/(type<10.5?.35:.3)))*detail;
+   else if(type>11.5&&type<12.5)color*=1.-.08*step(.8,fract((local.x+local.y)/.7))*detail;
+   else if(type>13.5&&type<14.5&&abs(n.z)<.5)color*=1.-.08*step(.9,fract(facade.x/1.2))*detail;
+   // Timber: dark posts every 2.2 m, a tie beam at 2.6 m, and shaded lattice panels between.
+   else if(type>14.5&&abs(n.z)<.5){float post=step(.86,fract(facade.x/2.2)),beam=step(2.45,local.z)*step(local.z,2.75);
+    color=mix(color*(.82+.1*step(.5,fract(local.z/.5))),vec3(.24,.16,.12)*illumination,max(post,beam)*detail);}
   }
  }else if(kind<1.5){
    color=bareGround(local.xy);
@@ -209,7 +236,7 @@ void main(){
  gl_FragColor=vec4(mix(color,fog,haze*.94),1.);
 }`;
 export function createWorldLayer(player, metrics, onChevronAnchor=null) {
-  let renderer, scene, camera, building, far, ground, roads, surfaces, trees, shadows, map, chevron, wayfinding;
+  let renderer, scene, camera, building, far, ground, roads, surfaces, trees, shadows, map, chevron, wayfinding, bridges=[], lastRoads=null;
   const anchor=new THREE.Vector4();
   const eye=new THREE.Vector2(), projection=new THREE.Matrix4(), localMatrix=new THREE.Matrix4();
   // Local metres → Mercator. Re-anchoring a GPS area moves the origin; geometry arrives already relative to it.
@@ -257,7 +284,11 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
     setGround(value,biome){groundTone.value=Math.max(0,Math.min(1,Number(value)||0));
       if(biome){earthA.value.fromArray(biome.earth[0]);earthB.value.fromArray(biome.earth[1]);leafTint.value.fromArray(biome.leaf);}
       map?.triggerRepaint();},groundTone(){return groundTone.value;},
+    // Raised bridge decks (structures.js) draw their own road; the flat strip along one is left out so it does not
+    // show on the water or road below. Roads crossing under a deck are kept.
+    setBridges(list){bridges=list||[];if(lastRoads)layer.setRoads(lastRoads);},
     setRoads(data){
+      lastRoads=data;
       if(roads){scene.remove(roads);roads.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
       // uv = (metres along the road, −1…1 across) and style = (surface, width × 10) let the shader paint markings.
       const p=[],uv=[],st=[];
@@ -266,8 +297,14 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
         const a=road.points[i-1],b=road.points[i],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);if(len<.01)continue;
         if(p.length/3+6>18000)break;
         const x=-dy/len*road.width/2,y=dx/len*road.width/2,surf=road.width<=2?6:road.oneway===undefined?8:road.oneway?(road.lanes===1?8:7):0,w=Math.min(255,Math.round(road.width*10));
-        const v=[[a[0]+x,a[1]+y,0],[a[0]-x,a[1]-y,0],[b[0]-x,b[1]-y,0],[b[0]+x,b[1]+y,0]],t=[[along,1],[along,-1],[along+len,-1],[along+len,1]];
-        for(const j of [0,1,2,0,2,3]){p.push(...v[j]);uv.push(...t[j]);st.push(surf,w);}along+=len;
+        const near=bridges.length&&bridges.some(q=>Math.max(a[0],b[0])>=q.bounds[0]&&Math.min(a[0],b[0])<=q.bounds[2]&&Math.max(a[1],b[1])>=q.bounds[1]&&Math.min(a[1],b[1])<=q.bounds[3]),parts=near?Math.ceil(len/6):1;
+        for(let k=0;k<parts;k++){
+          const t0=k/parts,t1=(k+1)/parts,A=[a[0]+dx*t0,a[1]+dy*t0],B=[a[0]+dx*t1,a[1]+dy*t1];
+          if(near&&underDeck(bridges,(A[0]+B[0])/2,(A[1]+B[1])/2,dx,dy))continue;
+          const v=[[A[0]+x,A[1]+y,0],[A[0]-x,A[1]-y,0],[B[0]-x,B[1]-y,0],[B[0]+x,B[1]+y,0]],t=[[along+len*t0,1],[along+len*t0,-1],[along+len*t1,-1],[along+len*t1,1]];
+          for(const j of [0,1,2,0,2,3]){p.push(...v[j]);uv.push(...t[j]);st.push(surf,w);}
+        }
+        along+=len;
       }}
       const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(p,3));g.setAttribute('normal',new THREE.Float32BufferAttribute(new Float32Array(p.length),3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setAttribute('style',new THREE.BufferAttribute(new Uint8Array(st),2));
       roads=new THREE.Mesh(g,materials[2]);roads.frustumCulled=false;roads.renderOrder=-1;scene.add(roads);metrics.roadVertices=p.length/3;

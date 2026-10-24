@@ -11,6 +11,7 @@ import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import {progressFraction, progressText, updateRate} from './progress.js';
 import {indoorVerdict, INDOOR} from './indoor.js';
 import {place, placedRect, overlapCount, intersects} from './layout.js';
+import {standingHeight} from './structures.js';
 import {parseCoordinates,searchPlaces,searchLandmarks,formatPoint,roadStart} from './places.js';
 import {visibleLabels,infoRows,fetchInfo,LABELS} from './building-labels.js';
 import {WAYDATA,PIN_COLORS,SIGN,findJunctions,pickSignposts,nextCrossing,pinPose,formatDistance} from './wayfinding-data.js';
@@ -19,7 +20,9 @@ import './style.css';
 const $=id=>document.getElementById(id);
 maplibregl.setWorkerUrl(mapWorkerUrl);
 maplibregl.setWorkerCount(1);
-const player={x:0,y:0,heading:38,pitch:0,speed:0,travelBearing:null,chevronHeading:null};
+// Raised bridge decks for the standing height (structures.js); `viewLift` raises the eye in dev inspection only.
+let bridges=[],viewLift=0;
+const player={x:0,y:0,z:0,deck:null,heading:38,pitch:0,speed:0,travelBearing:null,chevronHeading:null};
 // The loaded OSM area. `origin` is the local metre frame; GPS re-anchors it when the view radius leaves `bbox`.
 const area={origin:ORIGIN,bbox:BBOX,live:false,radius:null,provider:'Bundled OSM',cached:false,kinds:null,prior:false};
 // GPS target pose. The render loop eases the player toward `target`; `rawHeading` is the latest compass reading.
@@ -215,7 +218,7 @@ map.on('load',()=>{worldLayer=createWorldLayer(player,metrics,project=>{
  // The street pill sits on the current street where the view meets it (labelPoint) and shows whenever that point is on
  // screen; the layout resolver nudges (or, with no room, shrinks) it off other overlays using the cached obstacle rects.
  placeBuildingPills(project);
- const pill=$('street-pill'),point=street?labelPoint(labelSegments,player):[player.x+Math.sin(player.heading*Math.PI/180)*4.5,player.y+Math.cos(player.heading*Math.PI/180)*4.5,1.65],anchor=point?project(...point):{visible:false};
+ const pill=$('street-pill'),point=street?labelPoint(labelSegments,player):[player.x+Math.sin(player.heading*Math.PI/180)*4.5,player.y+Math.cos(player.heading*Math.PI/180)*4.5,1.65+(player.z||0)],anchor=point?project(...point):{visible:false};
  const margin=24;pill.hidden=!anchor.visible||anchor.x<margin||anchor.x>innerWidth-margin||anchor.y<margin||anchor.y>innerHeight-margin;overlays.labelPoint=point;if(pill.hidden){overlays.street=null;overlays.overlaps=overlays.baseOverlaps??overlays.overlaps;return;}
  anchor.y=Math.min(anchor.y,innerHeight-140);
  const {w,h}=overlays.streetSize,rect={x:anchor.x-w/2,y:anchor.y-h/2,w,h},p=place(rect,overlays.obstacles,{width:innerWidth,height:innerHeight});
@@ -223,7 +226,7 @@ map.on('load',()=>{worldLayer=createWorldLayer(player,metrics,project=>{
 });map.addLayer(worldLayer);camera();if(!startFromUrl())request();});
 map.on('error',e=>{console.error(e.error);notice('The 3D view encountered an error. Reload to try again.');});
 map.getCanvas().addEventListener('webglcontextlost',e=>{e.preventDefault();stop();notice('Graphics context lost. Reload the page to restore this area.');});
-function camera(){const h=player.heading*Math.PI/180,eye=toLngLat(player.x,player.y,area.origin),ahead=toLngLat(player.x+Math.sin(h)*20,player.y+Math.cos(h)*20,area.origin);map.jumpTo(map.calculateCameraOptionsFromTo(eye,1.65,ahead,1.65+Math.tan(player.pitch*Math.PI/180)*20));}
+function camera(){const h=player.heading*Math.PI/180,eye=toLngLat(player.x,player.y,area.origin),ahead=toLngLat(player.x+Math.sin(h)*20,player.y+Math.cos(h)*20,area.origin);const z=1.65+(player.z||0)+viewLift;map.jumpTo(map.calculateCameraOptionsFromTo(eye,z,ahead,z+Math.tan(player.pitch*Math.PI/180)*20));}
 const positioning=createPositioning({
  onRaw(fix,reason){logFix(fix,reason);},
  onFix(fix,course){
@@ -305,8 +308,9 @@ worker.onmessage=({data})=>{
   $('data-state').textContent=`${data.live?'Live '+data.provider:'Bundled OSM'} · ${data.timestamp?data.timestamp.slice(0,10):data.radius?'this session':'fixed LA area'}${data.radius?` · ${data.radius*2} m square${data.cached?' · reused':''}`:''}`;
  }
  if(data.labels){labels.anchors=data.labels.anchors;labels.blockers=data.labels.blockers;labels.pose=null;}
+ if(data.bridges){bridges=data.bridges;worldLayer.setBridges(bridges);player.deck=null;}
  if(data.roads){baseRoads=data.roads;roads=cacheRoads?.length?cacheRoads:baseRoads;worldLayer.setRoads(roads);}
- if(explore.arrive&&data.roads){explore.arrive=false;const start=roadStart(baseRoads,player);if(start?.moved){Object.assign(player,{x:start.x,y:start.y,heading:start.heading});camera();}}
+ if(explore.arrive&&data.roads){explore.arrive=false;const start=roadStart(baseRoads,player);if(start?.moved){Object.assign(player,{x:start.x,y:start.y,heading:start.heading,deck:null});camera();}}
  if(data.geometry)worldLayer.setBuildings({...data.geometry,far:data.far});if(data.extras){worldLayer.setSurfaces(data.extras.surfaces);worldLayer.setTrees(data.extras.trees);metrics.extras={areas:data.extras.areaCount,trees:data.extras.treeCount,mapped:data.extras.mappedTrees};}metrics.stream=data.stream;lastBuild=[data.x,data.y];lastStreamHeading=data.heading;
  if(Math.hypot(player.x-data.x,player.y-data.y)>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  metrics.queryMs=data.ms;
@@ -396,6 +400,8 @@ function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min
   const [bx,by,hit]=boundedToArea(nx,ny,area.bbox,area.origin);[player.x,player.y]=[bx,by];updateTravelBearing(player,player.x-oldX,player.y-oldY);
   if(hit)reachEdge();else if(edge.asked&&areaEdgeDistance(player.x,player.y,area.bbox,area.origin)>edge.rearm)edge.asked=false;
  }
+ // On a bridge deck the eye rides on it; under one it stays on the road below (structures.js).
+ player.deck=standingHeight(bridges,player.x,player.y,player.deck);player.z=player.deck;
  camera();
  if(!busy&&(Math.hypot(player.x-lastBuild[0],player.y-lastBuild[1])>12||Math.abs(headingDelta(lastStreamHeading,player.travelBearing??player.heading))>45)){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  if(now-uiTime>200){updateUI();drawMini();uiTime=now;}
@@ -427,7 +433,7 @@ function endLook(e){if(!drag||e.pointerId!==drag.id)return;const tap=e.type==='p
 for(const event of ['pointerup','pointercancel','lostpointercapture'])$('map').addEventListener(event,endLook);
 $('reset').onclick=()=>{stop();
  if(positioning.state.mode==='gps'){player.pitch=0;if(gps.target){[player.x,player.y]=gps.target;}if(positioning.state.course!==null)player.travelBearing=positioning.state.course;camera();drawMini();updateUI();start();notice(gps.target?'Snapped to the latest GPS fix.':'Waiting for a GPS fix.',2500);return;}
- Object.assign(player,{x:0,y:0,heading:38,pitch:0,travelBearing:null,chevronHeading:null});camera();drawMini();updateUI();if(!busy){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:0,y:0,heading:player.heading});}notice('Returned to the starting point.',2500);};
+ Object.assign(player,{x:0,y:0,z:0,deck:null,heading:38,pitch:0,travelBearing:null,chevronHeading:null});camera();drawMini();updateUI();if(!busy){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:0,y:0,heading:player.heading});}notice('Returned to the starting point.',2500);};
 $('view-mode').onclick=()=>{followCompass=!followCompass;applyMode();start();notice(followCompass?'View follows the compass again.':'Free look: drag or use turn buttons. GPS still moves your position.',4000);};
 function toggleGps(){if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();track.clear();driveLog.origin=null;driveLog.entries.length=0;gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;gps.prefetch=null;indoor.verdict=null;indoor.misses=0;showIndoor();[player.x,player.y]=boundedToArea(player.x,player.y,area.bbox,area.origin);camera();drawMini();notice('Location off. Explore by hand up to the edge of the loaded area.',5000);}else{$('guide').close();$('gps-dialog').showModal();}}
 $('gps').onclick=toggleGps;$('gps-toggle').onclick=toggleGps;$('gps-cancel').onclick=()=>$('gps-dialog').close();
@@ -490,7 +496,7 @@ if('serviceWorker'in navigator&&import.meta.env.PROD){navigator.serviceWorker.re
 applyMode();
 // Read-only diagnostic snapshot. Sensor state is exposed for testing; no camera APIs exist in Prototype E.
 // Development-only hook for browser checks: place the manual camera. Absent from production builds.
-if(import.meta.env.DEV)window.navigatorTeleport=(x,y,heading=player.heading)=>{Object.assign(player,{x,y,heading});camera();updateUI();start();};
+if(import.meta.env.DEV)window.navigatorTeleport=(x,y,heading=player.heading,pitch=player.pitch,lift=0)=>{viewLift=lift;Object.assign(player,{x,y,heading,pitch,deck:null});camera();updateUI();start();};
 window.navigatorDriveLog=()=>({version:1,note:'metres east/north of the first logged fix; t = receiver ms, arrival = delivery ms',entries:driveLog.entries.slice()});
 $('drive-log').onclick=()=>{const blob=new Blob([JSON.stringify(window.navigatorDriveLog(),null,1)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`navigator-sensor-log-${new Date().toISOString().slice(0,19).replace(/:/g,'')}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
 window.navigatorDiagnostics=()=>({player:{...player},viewMode:followCompass?'compass':'free',metrics:{...metrics},ready,busy,offlineReady,roadCache:{...roadCacheState,hold:roadHold,gpsPlanned:roadGpsPlanned},wayfinding:{...(worldLayer?.wayfindingState()||{}),junctions:way.junctions.length,signs:way.signKey,pins:way.screen.map(s=>({name:s.p.name,kind:s.p.kind,x:s.x,y:s.y})),visited:way.visited.size,streets:way.streets.size,trail:way.trail.length,next:$('street-next').hidden?null:$('street-next').textContent},layout:{overlaps:overlays.overlaps,fixedOverlaps:overlays.fixedOverlaps||0,placements:overlays.placements,street:overlays.street,obstacles:overlays.obstacles.length},indoor:{verdict:indoor.verdict,located:indoor.located,misses:indoor.misses,visible:!$('indoor-pill').hidden},progress:{task:progress.task,label:progress.label,bytes:progress.bytes,total:progress.total,fraction:progressFraction(progress),detail:progress.detail,visible:!$('progress').hidden,text:$('progress-meta').textContent},street:street?{...street}:null,limits:LIMITS,labels:{anchors:labels.anchors.length,blockers:labels.blockers.length,visible:(labels.visible||[]).map(v=>v.name),shown:[...labels.slots.values()].filter(s=>s.el.classList.contains('on')).map(s=>s.v.name)},area:{...area},explore:{active:explore.active,name:explore.name,point:explore.point,pending:!!explore.pending},gps:{track:track.state(),target:gps.target?[...gps.target]:null,rawHeading:gps.rawHeading,speed:gps.speed,course:gps.course,blend:gps.blend,failures:gps.failures,retryMs:gps.retryMs,retryInMs:gps.retryAt===-Infinity?null:Math.max(0,gps.retryAt-performance.now()),prefetch:gps.prefetch,prefetching:gps.prefetching,prefetches:gps.prefetches},sun:sunCheck.snapshot(),sensors:JSON.parse(JSON.stringify(positioning.state))});

@@ -33,7 +33,7 @@ export function createChevron(player) {
     const view=player.heading*Math.PI/180, bearing=player.chevronHeading??player.heading;
     // Resolved compass direction is independent of an optional free-look camera.
     // Without a compass, manual view heading remains the fallback.
-    group.position.set(player.x+Math.sin(view)*CHEVRON.distance,player.y+Math.cos(view)*CHEVRON.distance,CHEVRON.height);
+    group.position.set(player.x+Math.sin(view)*CHEVRON.distance,player.y+Math.cos(view)*CHEVRON.distance,CHEVRON.height+(player.z||0));
     group.rotation.z=-bearing*Math.PI/180;
     group.updateMatrixWorld(true);
   }

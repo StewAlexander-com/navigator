@@ -24,9 +24,9 @@ export function createChunkIndex(world,prepared=null){
  }
  attachParts(index,world);return index;
 }
-// Building parts go to the chunk that holds their centre (or the nearest one), alongside that chunk's buildings.
+// Building parts and bridge-deck pieces go to the chunk that holds their centre (or the nearest one), alongside that chunk's buildings.
 function attachParts(index,world){
- for(const p of world.parts||[]){const cx=(p.bounds[0]+p.bounds[2])/2,cy=(p.bounds[1]+p.bounds[3])/2;let best=null,bd=Infinity;
+ for(const p of [...(world.parts||[]),...(world.bridges||[])]){const cx=(p.bounds[0]+p.bounds[2])/2,cy=(p.bounds[1]+p.bounds[3])/2;let best=null,bd=Infinity;
   for(const c of index.values()){const d=distance(c.bounds,cx,cy);if(d<bd){bd=d;best=c;}if(d===0)break;}
   if(best)best.buildings.push(p);}
 }

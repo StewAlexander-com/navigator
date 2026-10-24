@@ -2,6 +2,8 @@ import {launchTestBrowser} from './test-browser.mjs';
 import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+// Square downloads only: the optional green/water relations request (v0.1.36) follows each one.
+const isSquare=u=>u.startsWith('https://overpass-api.de/')&&!decodeURIComponent(u).includes('relation[type=multipolygon]');
 const browser=await launchTestBrowser();
 const context=await browser.newContext({viewport:{width:1440,height:900}});
 const page=await context.newPage();const errors=[],requests=[],badResponses=[];
@@ -67,7 +69,7 @@ d=await diag(gpsPage);assert.equal(d.sensors.fixes.lastReason,'inaccurate');asse
 for(let i=4;i<=22;i+=2){await gpsContext.setGeolocation({latitude:HOME.latitude+i*.0001,longitude:HOME.longitude,accuracy:8});await gpsPage.waitForTimeout(650);}
 await gpsPage.waitForFunction(()=>window.navigatorDiagnostics().area.live===true&&!window.navigatorDiagnostics().busy,null,{timeout:20000});
 d=await diag(gpsPage);const north=(d.area.origin[1]-HOME.latitude)/.0001;assert.ok(north>=10&&north<=22&&Math.abs(d.area.origin[0]-HOME.longitude)<1e-9,`origin ${d.area.origin}`);assert.equal(d.area.radius,400);assert.ok(d.area.bbox[0]<HOME.latitude,'bbox spans south of the start');assert.equal(d.area.provider,'Overpass');const expectedY=(HOME.latitude+.0022-d.area.origin[1])*111319.49;assert.ok(Math.abs(d.player.y-expectedY)<12&&Math.abs(d.player.x)<1,`player ${d.player.x},${d.player.y} vs ${expectedY}`);assert.ok(d.metrics.buildings>0);assert.equal(d.sensors.fixes.rejected,1);
-assert.ok(gpsRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.equal(gpsRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length,1);
+assert.ok(gpsRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.equal(gpsRequests.filter(isSquare).length,1);
 await gpsPage.waitForTimeout(800);await gpsPage.locator('#stats-toggle').click();await gpsPage.screenshot({path:'test-results/gps.png'});await gpsPage.locator('#stats-toggle').click();
 await gpsPage.setViewportSize({width:390,height:844});await gpsPage.waitForTimeout(300);await gpsPage.screenshot({path:'test-results/gps-mobile.png'});assert.equal(await gpsPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.equal((await diag(gpsPage)).layout.overlaps,0);assert.equal((await diag(gpsPage)).layout.fixedOverlaps,0);
 // Stopping returns to manual controls at the current place.
@@ -101,7 +103,7 @@ await drivePage.waitForFunction(()=>window.navigatorDiagnostics().roadCache.hold
 // At 27 m/s the 122 m of runway left in the bundled box is under eight seconds of travel, so the next square is prefetched
 // while the bundled area still covers the fix; the later edge swap must then reuse it instead of downloading at the edge.
 await drivePage.waitForFunction(()=>window.navigatorDiagnostics().gps.prefetch!==null,null,{timeout:10000});
-const prefetched=await diag(drivePage);assert.equal(prefetched.area.live,false,'prefetch happened while still in the bundled area');assert.equal(prefetched.gps.prefetch.radius,1000);assert.equal(driveRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length,1);
+const prefetched=await diag(drivePage);assert.equal(prefetched.area.live,false,'prefetch happened while still in the bundled area');assert.equal(prefetched.gps.prefetch.radius,1000);assert.equal(driveRequests.filter(isSquare).length,1);
 // Per-frame probe in absolute metres north of HOME (independent of re-anchoring), plus the noisy compass.
 await drivePage.evaluate(lat=>{window.__probe=[];const M=111319.49;(function sample(){const d=window.navigatorDiagnostics();window.__probe.push([performance.now(),d.player.y+(d.area.origin[1]-lat)*M,d.player.heading]);requestAnimationFrame(sample);})();
  let t=0;window.__compass=setInterval(()=>{t+=.1;window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute',{alpha:360-(90+30*Math.sin(t)),beta:0,gamma:0,absolute:true}));},100);},HOME.latitude);
@@ -119,7 +121,7 @@ let maxStep=0,backwards=0;for(let i=1;i<probe.length;i++){const step=probe[i][1]
 assert.ok(probe.length>DRIVE_S*10,`only ${probe.length} frames sampled`);assert.ok(maxStep<10,`max per-frame step ${maxStep} m`);assert.equal(backwards,0,`${backwards} backwards frames`);
 const travelled=probe[probe.length-1][1]-probe[0][1];assert.ok(travelled>27*DRIVE_S*.8&&travelled<27*DRIVE_S*1.1,`travelled ${travelled} m`);
 // 835 m at 60 mph: the prefetched 2 km square covers the whole drive, so exactly one download; the swap came from the session cache.
-const driveOverpass=driveRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length;assert.equal(driveOverpass,1,`${driveOverpass} Overpass requests`);
+const driveOverpass=driveRequests.filter(isSquare).length;assert.equal(driveOverpass,1,`${driveOverpass} Overpass requests`);
 assert.equal(drive.area.live,true);assert.equal(drive.area.cached,true);assert.equal(drive.area.radius,1000);assert.equal(drive.gps.failures,0);assert.ok(drive.gps.prefetches>=1);
 assert.ok(driveRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.deepEqual(driveErrors,[]);
 // The hold lasted the whole drive with no GPS-centred plan; the field guide's Cache this area tap releases it explicitly.
@@ -142,7 +144,7 @@ let limited=await diag(limitPage);assert.equal(limited.gps.failures,1);assert.eq
 assert.ok((await limitPage.locator('#notice').innerText()).includes('next attempt in 45 s'));assert.equal(limited.area.live,false);assert.ok(limited.metrics.buildings>0,'the bundled scene stays usable');
 // Further fixes during the hold add no requests.
 for(let i=24;i<=28;i+=2){await limitContext.setGeolocation({latitude:HOME.latitude+i*.0001,longitude:HOME.longitude,accuracy:8});await limitPage.waitForTimeout(650);}
-assert.equal(limitRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length,1);assert.equal(limitRequests.filter(u=>u.startsWith('https://api.openstreetmap.org/')).length,0);assert.deepEqual(limitErrors,[]);
+assert.equal(limitRequests.filter(isSquare).length,1);assert.equal(limitRequests.filter(u=>u.startsWith('https://api.openstreetmap.org/')).length,0);assert.deepEqual(limitErrors,[]);
 await limitContext.close();
 // Mebane, NC: a real tag-poor suburban square (tests/fixtures/mebane-800m.json, a genuine Overpass response, © OpenStreetMap
 // contributors, ODbL) where every footprint is bare building=yes. Most must classify as homes, none as offices, and a
@@ -184,7 +186,7 @@ for(let s=1;s<=12;s++){await mebanePage.evaluate(c=>window.__fix(c),{latitude:HO
 await mebanePage.waitForTimeout(500);mb=await diag(mebanePage);const mebaneProbe=await mebanePage.evaluate(()=>window.__probe);
 let mebaneStep=0,mebaneBack=0;for(let i=1;i<mebaneProbe.length;i++){const step=mebaneProbe[i][1]-mebaneProbe[i-1][1];mebaneStep=Math.max(mebaneStep,step);if(step<-0.05)mebaneBack++;}
 assert.equal(mb.sensors.fixes.rejected,0);assert.equal(mb.sensors.fixes.accepted,15);assert.equal(mb.indoor.verdict,null,'never "inside" while driving');assert.ok(mebaneProbe.length>100);assert.ok(mebaneStep<10,`max step ${mebaneStep}`);assert.equal(mebaneBack,0);
-assert.ok(mebaneRequests.filter(u=>u.startsWith('https://overpass-api.de/')).length<=2);assert.ok(mebaneRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.deepEqual(mebaneErrors,[]);
+assert.ok(mebaneRequests.filter(isSquare).length<=2);assert.ok(mebaneRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.deepEqual(mebaneErrors,[]);
 await mebaneContext.close();
 const gps={firstFixMs,easeMs,final:await diag(gpsPage),drive:{frames:probe.length,maxStepM:maxStep,travelledM:travelled,overpassRequests:driveOverpass,heading:drive.player.heading,fixes:drive.sensors.fixes},mebane:{kinds:mb.area.kinds,buildings:mb.metrics.buildings,maxStepM:mebaneStep,frames:mebaneProbe.length}};
 const results={errors,badResponses,requests,moving,offline,viewport:{width:390,height:844},overflow,gps};await fs.writeFile('test-results/browser-results.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));

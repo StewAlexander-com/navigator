@@ -274,6 +274,7 @@ worker.onmessage=({data})=>{
   if(verdict){indoor.verdict=verdict;indoor.misses=0;}else if(++indoor.misses>=INDOOR.holdFixes)indoor.verdict=null;
   showIndoor();return;
  }
+ if(data.type==='extras'){if(ready&&data.extras){worldLayer.setSurfaces(data.extras.surfaces);worldLayer.setTrees(data.extras.trees);metrics.extras={areas:data.extras.areaCount,trees:data.extras.treeCount,mapped:data.extras.mappedTrees};}return;}
  if(data.type==='progress'){
   if(data.task==='prefetch'?data.id===gps.prefetchId:data.id===requestId)updateProgress(data.task==='prefetch'?'prefetch':'area',{bytes:data.bytes??null,total:data.total??null,detail:PHASES[data.phase]??''});
   return;
@@ -300,6 +301,7 @@ worker.onmessage=({data})=>{
   locate();
   area.live=data.live;area.radius=data.radius;area.provider=data.provider;area.cached=!!data.cached;area.kinds=data.kinds||null;area.prior=!!data.prior;metrics.responseBytes=data.bytes;
   $('area-name').textContent=explore.active?explore.name:data.radius?'Live area around you':'Downtown Los Angeles';
+  area.context=data.context||null;worldLayer.setGround(area.context?.ground??0,area.context?.biome);const eyebrow=area.context?`${area.context.setting} · ${area.context.climate}`.toUpperCase():'EXPLORING';$('area-eyebrow').textContent=eyebrow;$('area-eyebrow').title=eyebrow;
   $('data-state').textContent=`${data.live?'Live '+data.provider:'Bundled OSM'} · ${data.timestamp?data.timestamp.slice(0,10):data.radius?'this session':'fixed LA area'}${data.radius?` · ${data.radius*2} m square${data.cached?' · reused':''}`:''}`;
  }
  if(data.labels){labels.anchors=data.labels.anchors;labels.blockers=data.labels.blockers;labels.pose=null;}

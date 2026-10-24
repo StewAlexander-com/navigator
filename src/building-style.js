@@ -1,8 +1,8 @@
 // Compact visual cues, not a claim about surveyed façades or current occupancy.
 export const BUILDING_STYLES=['neutral','home','apartments','storefront','office','utility','civic'];
-const homes=new Set(['house','detached','semidetached_house','terrace','bungalow','cabin','farm']);
+const homes=new Set(['house','detached','semidetached_house','terrace','bungalow','cabin','farm','hut','stilt_house','static_caravan','houseboat']);
 const homesMany=new Set(['apartments','residential','dormitory','hotel']);
-const utility=new Set(['industrial','warehouse','garage','garages','parking','shed','barn','hangar','roof','bridge','construction','vacant']);
+const utility=new Set(['industrial','warehouse','garage','garages','parking','shed','barn','hangar','roof','bridge','construction','vacant','farm_auxiliary','greenhouse','carport','stable','cowshed','sty','kiosk']);
 const civic=new Set(['civic','public','government','school','university','hospital','church','cathedral','chapel','mosque','synagogue','temple','train_station']);
 const civicUses=new Set(['school','university','college','hospital','courthouse','townhall','police','fire_station','library','place_of_worship']);
 const shops=new Set(['restaurant','cafe','fast_food','pub','bar','bank','pharmacy']);
@@ -11,7 +11,8 @@ const present=v=>!!v&&!['no','vacant','disused'].includes(v);
 export const residentialRoads=new Set(['residential','service','unclassified','living_street']);
 // `heightDefault`: the height is a documented default, not a tag; `nearRoad`: class of the nearest non-footway road within
 // 60 m when there is no land-use polygon; `prior`: most generic footprints in this square are small (see parseWorld).
-export function buildingStyle(tags,{landuse=null,height=12,area=0,heightDefault=false,nearRoad=null,prior=false}={}){
+// `countryside`: the square reads as a village or rural area (see context.js).
+export function buildingStyle(tags,{landuse=null,height=12,area=0,heightDefault=false,nearRoad=null,prior=false,countryside=false}={}){
  const b=String(tags.building||'yes').toLowerCase(),uses=String(tags['building:use']||'').toLowerCase().split(';');
  const shop=present(tags.shop)||shops.has(tags.amenity)||uses.includes('retail');
  let kind=0,evidence='unknown';
@@ -31,6 +32,9 @@ export function buildingStyle(tags,{landuse=null,height=12,area=0,heightDefault=
   else if(shop)kind=3;
   if(kind)evidence='use tag';
  }
+ // In a village or the countryside an untagged footprint with no use or height evidence is a home if small, else a
+ // farm or utility shed; a city default (glazed 12 m block) is the least likely reading there.
+ if(countryside&&heightDefault&&(!kind&&['yes','building'].includes(b)||b==='residential'&&kind===2&&area<=300)&&!shop&&!present(tags.office)&&!civicUses.has(tags.amenity)&&!tags.amenity){kind=area<=300?1:5;evidence='area context';}
  // Generic commercial is not proof of an office. Explicit unusual types remain neutral.
  if(!kind&&['yes','building'].includes(b)&&landuse){
   if(landuse==='residential')kind=height<=10&&area<=250?1:2;

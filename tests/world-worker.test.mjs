@@ -12,7 +12,8 @@ globalThis.fetch=async url=>{fetched.push(String(url));const r=script(String(url
 await import('../src/world.worker.js');
 let id=0;
 async function send(data){const before=messages.length;const mine=++id;await self.onmessage({data:{...data,id:mine}});return messages.slice(before).find(m=>m.id===mine&&m.type!=='progress');}
-const overpass=u=>u.startsWith('https://overpass-api.de/'),osmApi=u=>u.startsWith('https://api.openstreetmap.org/');
+// The optional cover request (green/water relations, v0.1.36) follows a successful download; it is not a square download.
+const cover=u=>decodeURIComponent(u).includes('relation[type=multipolygon]'),overpass=u=>u.startsWith('https://overpass-api.de/')&&!cover(u),osmApi=u=>u.startsWith('https://api.openstreetmap.org/');
 const bboxOf=u=>decodeURIComponent(u).match(/way\[building\]\(([^)]+)\)/)[1].split(',').map(Number);
 const center=toLngLat(0,3000);
 test('a live square is downloaded once per session, reused for any fix it covers, and refreshed only on request',async()=>{
@@ -46,7 +47,7 @@ test('a rate limit honours Retry-After and never falls through to the OSM API',a
 test('a dense square (504 or Overpass timeout remark) steps down 1,000 → 400 → 250 m on Overpass before any other provider',async()=>{
  fetched.length=0;script=(u,n)=>n===1?{status:504}:{status:200,body:snapshot};
  const c=toLngLat(-60000,0);const r=await send({type:'load',center:c,radius:LIMITS.areaMax,fix:c});assert.equal(r.type,'ready');assert.equal(r.radius,LIMITS.area);assert.equal(r.provider,'Overpass');
- assert.deepEqual(fetched.map(bboxOf),[areaAround(c,LIMITS.areaMax),areaAround(c,LIMITS.area)]);
+ assert.deepEqual(fetched.filter(overpass).map(bboxOf),[areaAround(c,LIMITS.areaMax),areaAround(c,LIMITS.area)]);
  fetched.length=0;script=(u,n)=>n<=2?{status:200,body:JSON.stringify({elements:[],remark:'runtime error: Query timed out'})}:{status:200,body:snapshot};
  const d=toLngLat(-80000,0);const t=await send({type:'load',center:d,radius:LIMITS.areaMax,fix:d});assert.equal(t.type,'ready');assert.equal(t.radius,LIMITS.areaFallback);assert.equal(fetched.filter(overpass).length,3);assert.equal(fetched.some(osmApi),false);
  // Only when the smallest Overpass square is still dense does the OSM API get one attempt; other failures keep the original fallback.
@@ -77,4 +78,13 @@ test('locate answers with the containing footprint only for the current world fr
  if(inside.located){assert.equal(inside.located.id,b.id);assert.ok(inside.located.depth>0);assert.ok('kind' in inside.located&&'name' in inside.located);}
  const stale=await send({type:'locate',x:centre[0],y:centre[1],origin:[0,0]});assert.equal(stale.located,null);
  const nowhere=await send({type:'locate',x:1e6,y:1e6,origin:c});assert.equal(nowhere.located,null);assert.equal(fetched.filter(overpass).length,1);
+});
+test('green and water relations come in one optional request after the square, never delay it, and never fail it',async()=>{
+ fetched.length=0;script=u=>cover(u)?{status:200,body:JSON.stringify({elements:[forest]})}:{status:200,body:snapshot};
+ const c=toLngLat(-400000,0),forest={type:'relation',id:9,tags:{type:'multipolygon',landuse:'forest'},members:[{type:'way',ref:1,role:'outer',geometry:[[-.002,-.002],[-.002,.002],[.002,.002],[.002,-.002],[-.002,-.002]].map(([dx,dy])=>({lat:c[1]+dy,lon:c[0]+dx}))}]};const seen=messages.length;const r=await send({type:'load',center:c,radius:LIMITS.area,fix:c});assert.equal(r.type,'ready');
+ assert.equal(fetched.filter(cover).length,1);assert.ok(fetched.indexOf(fetched.find(cover))>fetched.indexOf(fetched.find(overpass)),'after the square');
+ assert.ok(r.extras.areaCount>=0);const before=r.extras?.areaCount??0;await new Promise(ok=>setTimeout(ok,200));const late=messages.slice(seen).find(m=>m.type==='extras');assert.ok(late,'relations arrive as a later extras message');assert.equal(late.extras.areaCount,before+1,'the forest relation is merged');
+ for(const status of [429,500]){fetched.length=0;script=u=>cover(u)?{status}:{status:200,body:snapshot};const d=toLngLat(-420000-status*100,0);const ok=await send({type:'load',center:d,radius:LIMITS.area,fix:d});assert.equal(ok.type,'ready',`cover ${status}`);}
+ fetched.length=0;script=u=>cover(u)?{status:200,body:'x'.repeat(4*1024*1024+10)}:{status:200,body:snapshot};
+ const e=toLngLat(-600000,0);const big=await send({type:'load',center:e,radius:LIMITS.area,fix:e});assert.equal(big.type,'ready','an oversized cover response is skipped');
 });

@@ -58,9 +58,15 @@ void main(){float d=distance(local.xy,eye);if(d>radius)discard;float a=(1.-smoot
 // Analytic material cues: no textures, shadow maps, reflection targets or extra passes.
 // The afternoon light is art direction, independent of the measured compass/sun check.
 const fragmentShader = `precision highp float;
-uniform vec2 eye; uniform float radius; uniform float fogRadius; uniform vec2 fade; uniform float kind;
+uniform vec2 eye; uniform float radius; uniform float fogRadius; uniform vec2 fade; uniform float kind; uniform float ground; uniform vec3 earthA; uniform vec3 earthB; uniform vec3 leafTint;
 varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildingStyle; varying float height; varying float clump;
 float grain(vec2 p){vec3 q=fract(vec3(p.xyx)*.1031);q+=dot(q,q.yzx+33.33);return fract((q.x+q.y)*q.z);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(grain(i),grain(i+vec2(1,0)),f.x),mix(grain(i+vec2(0,1)),grain(i+vec2(1,1)),f.x),f.y);}
+// Bare ground between mapped surfaces: paving tiles in a city (ground 0), patchy ground in the countryside (1) in the
+// climate's two earth tones (climate.js): green and brown in a temperate place, red sand in a hot desert.
+vec3 bareGround(vec2 p){vec2 tile=abs(fract(p/2.)-.5);vec3 paving=vec3(.64,.54,.40)*(1.-.10*step(.48,max(tile.x,tile.y)));
+ float mottle=vnoise(p/9.)*.65+vnoise(p/2.3)*.35;vec3 earth=mix(earthA,earthB,smoothstep(.45,.8,mottle))*(1.+(grain(floor(p*2.))-.5)*.08);
+ return mix(paving,earth,ground);}
 void main(){
  float d=distance(local.xy,eye);if(d>radius)discard;
  vec3 fog=vec3(.90,.85,.77);
@@ -130,8 +136,7 @@ void main(){
    color*=1.-.12*step(.96,cell.y)*detail;
   }
  }else if(kind<1.5){
-   color=vec3(.64,.54,.40);
-   vec2 tile=abs(fract(local.xy/2.)-.5);color*=1.-.10*step(.48,max(tile.x,tile.y));
+   color=bareGround(local.xy);
  }else if(kind>3.5){
    // Trees: trunk darker at the base; crown lit, darker underneath (self-shadow), lighter at the top, tinted per
    // instance and broken up by a 0.4 m leaf-clump grain. Palms are yellower, conifers bluer and darker.
@@ -143,23 +148,22 @@ void main(){
     float f=clamp(clump,0.,1.),near=1.-smoothstep(60.,120.,d);
     // Wrapped diffuse and a sky-bounce fill keep the underside a shaded green, not a near-black band.
     float wrap=clamp((dot(n,sun)+.4)/1.4,0.,1.),under=smoothstep(-.9,.5,n.z);
-    color=leaf*(.60+.52*wrap)*mix(.88,1.05,under);
+    color=leaf*leafTint*(.60+.52*wrap)*mix(.88,1.05,under);
     color+=vec3(.035,.05,.06)*(1.-under);
     color*=mix(1.,.78+.44*f,near);
     color+=vec3(.08,.07,.03)*pow(wrap,4.)*under*(.6+.4*f);
    }
  }else{
-   // Style x: 0 two-way road, 7 one-way road, 8 road of unknown direction, 6 footway, 9 curb, 1 grass, 2 wood, 3 water, 4 parking, 5 plaza. Style y: road width × 10.
+   // Style x: 0 two-way road, 7 one-way road, 8 road of unknown direction, 6 footway, 9 curb, 1 grass, 2 wood, 3 water, 4 parking, 5 plaza,
+   // 10 wetland, 11 farmland, 12 sand/bare ground, 13 scrub. Style y: road width × 10.
    float surf=buildingStyle.x,width=buildingStyle.y*.1;
    float grazing=1.-max(view.z,0.);grazing*=grazing;
    float footprint=max(fwidth(local.x*14.),fwidth(local.y*14.));
    float detail=(1.-smoothstep(8.,38.,d))*(1.-smoothstep(.35,1.,footprint));
-   if(surf<.5||surf>5.5||(surf>3.5&&surf<4.5)){
+   if(surf<.5||(surf>5.5&&surf<9.5)||(surf>3.5&&surf<4.5)){
     color=(surf>5.5&&surf<6.5)||surf>8.5?vec3(.60,.58,.54):surf>3.5?vec3(.34,.34,.32):vec3(.29,.29,.27);
     color+=vec3(.14,.105,.055)*grazing;
     color+=(grain(floor(local.xy*14.))-.5)*.035*detail;
-    // Painted markings from the quad's (along, across) coordinates: double yellow centre and white edge lines on
-    // roads at least 10 m wide, faded out by 90 m so they never shimmer. No geometry is added.
     // Painted markings from the quad's (along, across) coordinates, only on roads at least 10 m wide and faded out by
     // 90 m so they never shimmer. Two-way (0): double yellow centre. One-way (7): dashed white lane divider. Roads whose
     // direction is unknown (8, older cached road packages) and one-lane one-ways stay plain. No edge lines: overlapping
@@ -185,11 +189,20 @@ void main(){
     }
     if(surf>5.5&&surf<6.5){float f=fract(facade.x/1.5),fw=max(fwidth(facade.x/1.5),1e-4);color*=1.-.10*smoothstep(.94-fw,.94+fw,f)*(1.-smoothstep(.3,.9,fw*8.));}
    }else if(surf<1.5){color=vec3(.41,.50,.28)*(1.+(grain(floor(local.xy*2.))-.5)*.14);}
-   else if(surf<2.5){color=vec3(.29,.38,.22)*(1.+(grain(floor(local.xy*1.5))-.5)*.2);}
+   else if(surf<2.5){color=vec3(.29,.38,.22)*leafTint*(1.+(grain(floor(local.xy*1.5))-.5)*.2);}
    else if(surf<3.5){vec3 reflected=reflect(-view,vec3(0,0,1));color=mix(vec3(.19,.30,.34),vec3(.58,.70,.76),smoothstep(-.1,.5,reflected.z)*.55+grazing*.35);color+=vec3(.85,.70,.45)*pow(max(dot(reflected,sun),0.),40.);}
-   else{color=vec3(.70,.65,.56);vec2 tile=abs(fract(local.xy/1.2)-.5);color*=1.-.08*step(.46,max(tile.x,tile.y));}
+   else if(surf<5.5){color=vec3(.70,.65,.56);vec2 tile=abs(fract(local.xy/1.2)-.5);color*=1.-.08*step(.46,max(tile.x,tile.y));}
+   // Wetland: reedy olive with soft standing-water pools that catch the sky.
+   else if(surf<10.5){float pool=smoothstep(.58,.66,vnoise(local.xy/6.)*.7+vnoise(local.xy/1.7)*.3);vec3 reflected=reflect(-view,vec3(0,0,1));
+    vec3 water=mix(vec3(.20,.29,.29),vec3(.55,.66,.70),smoothstep(-.1,.5,reflected.z)*.5+grazing*.3);
+    color=mix(vec3(.34,.42,.25)*(1.+(grain(floor(local.xy*3.))-.5)*.18),water,pool*.85);}
+   // Farmland: crop rows along the field's longest edge (uv frame from buildSurfaces), fading out by 80 m.
+   else if(surf<11.5){float row=abs(fract(facade.y/1.6)-.5)*2.,rows=(1.-smoothstep(25.,80.,d))*(1.-smoothstep(.35,1.,fwidth(facade.y)*2.));
+    color=mix(vec3(.50,.54,.29),vec3(.58,.55,.33),vnoise(local.xy/14.))*(1.-.16*smoothstep(.55,.95,row)*rows);}
+   else if(surf<12.5){color=mix(vec3(.73,.66,.52),earthB,.5)*(1.+(vnoise(local.xy/3.)-.5)*.14+(grain(floor(local.xy*4.))-.5)*.06);}
+   else{color=mix(vec3(.30,.37,.22),vec3(.40,.43,.26),vnoise(local.xy/2.5))*leafTint*(1.+(grain(floor(local.xy*2.))-.5)*.16);}
    // Roads end at their own 180 m reach; blend them into the ground before it so no edge shows in the wider fog.
-   color=mix(color,vec3(.64,.54,.40),smoothstep(radius*.72,radius,d));
+   color=mix(color,bareGround(local.xy),smoothstep(radius*.72,radius,d));
  }
  float haze=smoothstep(fogRadius*.35,fogRadius*.98,d);
  gl_FragColor=vec4(mix(color,fog,haze*.94),1.);
@@ -203,8 +216,11 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
   setOrigin(ORIGIN);
   // Buildings, silhouettes and ground are cut off at the far LOD radius; roads keep 180 m. One fog curve spans all of them.
   const fade=new THREE.Vector2(...LOD.fade);
+  // Shared uniforms from the area context (context.js): 0 city paving … 1 countryside earth, and the climate's earth
+  // tones and foliage tint (climate.js).
+  const groundTone={value:0},earthA={value:new THREE.Vector3(.40,.47,.26)},earthB={value:new THREE.Vector3(.52,.46,.31)},leafTint={value:new THREE.Vector3(1,1,1)};
   // Materials: 0 buildings, 1 ground, 2 roads (180 m), 3 silhouettes, 4 surfaces (road shader, far radius), 5 trees.
-  const materials=[0,1,2,3,2,4].map((kind,i)=>new THREE.ShaderMaterial({vertexShader:kind===4?treeVertexShader:vertexShader,fragmentShader,uniforms:{eye:{value:eye},radius:{value:i===2?LIMITS.radius:i===5?TREES.radius:LOD.far},fogRadius:{value:LOD.far},fade:{value:fade},kind:{value:kind}},side:kind===4?THREE.FrontSide:THREE.DoubleSide,defaultAttributeValues:{style:[0,32],shape:[0]}}));
+  const materials=[0,1,2,3,2,4].map((kind,i)=>new THREE.ShaderMaterial({vertexShader:kind===4?treeVertexShader:vertexShader,fragmentShader,uniforms:{eye:{value:eye},radius:{value:i===2?LIMITS.radius:i===5?TREES.radius:LOD.far},fogRadius:{value:LOD.far},fade:{value:fade},kind:{value:kind},ground:groundTone,earthA,earthB,leafTint},side:kind===4?THREE.FrontSide:THREE.DoubleSide,defaultAttributeValues:{style:[0,32],shape:[0]}}));
   // Flat layers (ground, surfaces, roads) are drawn first, in order, without depth: painter's order replaces the
   // millimetre z offsets that flickered at distance. Buildings, trees and the chevron then depth-test normally over them.
   for(const i of [1,2,4]){materials[i].depthTest=false;materials[i].depthWrite=false;}
@@ -234,6 +250,9 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
     setBeacons(list){wayfinding?.setBeacons(list);},
     setSigns(list){wayfinding?.setSigns(list);},
     wayfindingState(){return wayfinding?.diagnostics()||null;},
+    setGround(value,biome){groundTone.value=Math.max(0,Math.min(1,Number(value)||0));
+      if(biome){earthA.value.fromArray(biome.earth[0]);earthB.value.fromArray(biome.earth[1]);leafTint.value.fromArray(biome.leaf);}
+      map?.triggerRepaint();},groundTone(){return groundTone.value;},
     setRoads(data){
       if(roads){scene.remove(roads);roads.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
       // uv = (metres along the road, −1…1 across) and style = (surface, width × 10) let the shader paint markings.

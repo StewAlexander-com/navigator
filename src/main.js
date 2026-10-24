@@ -11,7 +11,7 @@ import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import {progressFraction, progressText, updateRate} from './progress.js';
 import {indoorVerdict, INDOOR} from './indoor.js';
 import {place, placedRect, overlapCount, intersects} from './layout.js';
-import {parseCoordinates,searchPlaces,formatPoint,roadStart} from './places.js';
+import {parseCoordinates,searchPlaces,searchLandmarks,formatPoint,roadStart} from './places.js';
 import {visibleLabels,infoRows,fetchInfo,LABELS} from './building-labels.js';
 import {WAYDATA,PIN_COLORS,SIGN,findJunctions,pickSignposts,nextCrossing,pinPose,formatDistance} from './wayfinding-data.js';
 import './style.css';
@@ -454,11 +454,14 @@ function startFromUrl(){const at=new URL(location.href).searchParams.get('at'),p
 function openPlace(){$('guide').close();stop();$('place-status').textContent='';placeSearch.text='';showChoices([]);$('place-input').value=explore.point?`${explore.point[1].toFixed(5)}, ${explore.point[0].toFixed(5)}`:'';$('place-dialog').showModal();$('place-input').focus();}
 $('building-close').onclick=closeBuilding;$('building-dialog').addEventListener('close',()=>{if(labels.info)closeBuilding();});
 $('place-open').onclick=openPlace;$('guide-place').onclick=openPlace;$('place-cancel').onclick=()=>$('place-dialog').close();
-const placeSearch={text:'',choices:[]};
+const placeSearch={text:'',choices:[],landmarks:0};
+function placeList(list,items,go){list.replaceChildren();for(const c of items){const li=document.createElement('li'),b=document.createElement('button'),n=document.createElement('strong'),d=document.createElement('span');b.type='button';n.textContent=c.name;d.textContent=c.detail||formatPoint(c.point);b.append(n,d);b.onclick=()=>go(c);li.append(b);list.append(li);}list.hidden=!items.length;}
+function showLandmarks(place,items){placeList($('place-landmarks'),items,c=>goToChoice({point:c.point,name:c.name,detail:place.name}));$('place-landmarks-title').hidden=!items.length;if(place)$('place-landmarks-title').textContent=`Landmarks in ${place.name}`;}
+// Best effort after a place is found: no landmarks, or Wikipedia being busy, just leaves the section out.
+async function findLandmarks(place){const token=placeSearch.landmarks;try{const items=await searchLandmarks(place);if(token===placeSearch.landmarks&&$('place-dialog').open)showLandmarks(place,items);}catch{}}
 function showChoices(choices){
- placeSearch.choices=choices;const list=$('place-choices');list.replaceChildren();
- for(const c of choices){const li=document.createElement('li'),b=document.createElement('button'),n=document.createElement('strong'),d=document.createElement('span');b.type='button';n.textContent=c.name;d.textContent=c.detail||formatPoint(c.point);b.append(n,d);b.onclick=()=>goToChoice(c);li.append(b);list.append(li);}
- list.hidden=!choices.length;$('place-choices-title').hidden=!choices.length;$('place-choices-title').textContent=choices.length>1?'Did you mean':'Found';
+ placeSearch.choices=choices;placeSearch.landmarks++;showLandmarks(null,[]);placeList($('place-choices'),choices,goToChoice);
+ $('place-choices-title').hidden=!choices.length;$('place-choices-title').textContent=choices.length>1?'Did you mean':'Found';
  $('place-go').textContent=choices.length?`Go to ${choices[0].name}${choices[0].detail?`, ${choices[0].detail.split(', ').slice(-2)[0]}`:''}`:'Explore here';
 }
 function goToChoice(c){if(busy){$('place-status').textContent='An area is still loading. Try again in a moment.';return;}$('place-dialog').close();explorePlace(c.point,c.name,c.detail);}
@@ -471,7 +474,7 @@ $('place-form').onsubmit=async e=>{
  $('place-go').disabled=true;showChoices([]);$('place-status').textContent='Looking up that place with OpenStreetMap Nominatim…';
  try{const choices=await searchPlaces(text);placeSearch.text=text;
   if(!choices.length){$('place-status').textContent='No place found. Check the spelling, add a region or country, or use coordinates such as 36.0957, -79.2670.';return;}
-  showChoices(choices);$('place-status').textContent=choices.length>1?'Several places match. Pick the one you mean.':'Check this is the right place, then go.';}
+  showChoices(choices);findLandmarks(choices[0]);$('place-status').textContent=choices.length>1?'Several places match. Pick the one you mean.':'Check this is the right place, then go.';}
  catch(error){$('place-status').textContent=`Place search is unavailable (${error.message}). Coordinates still work.`;}
  finally{$('place-go').disabled=false;}
 };

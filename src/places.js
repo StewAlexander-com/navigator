@@ -22,7 +22,8 @@ export function placeChoice(hit, q = '') {
   const parts = [a.city || a.town || a.village || a.hamlet || a.suburb || a.county, a.state || a.region || a.province, a.country];
   let detail = [...new Set(parts.filter(p => p && p !== name))].join(', ');
   if (!detail) detail = String(hit.display_name || '').split(',').slice(1).map(s => s.trim()).filter(Boolean).slice(-3).join(', ');
-  return {point: [lng, lat], name, detail};
+  const box = (hit.boundingbox || []).map(Number), bbox = box.length === 4 && box.every(Number.isFinite) ? box : null;
+  return {point: [lng, lat], name, detail, ...(bbox ? {bbox} : {})};
 }
 // Up to `limit` distinct places for a typed name. Nominatim's usage policy rules out search-as-you-type, so this runs on submit only.
 export async function searchPlaces(query, fetcher = fetch, limit = PLACES.choices) {
@@ -33,6 +34,42 @@ export async function searchPlaces(query, fetcher = fetch, limit = PLACES.choice
   if (!response.ok) throw new Error(`Place search returned ${response.status}.`);
   const seen = new Set(), out = [];
   for (const hit of await response.json()) {const c = placeChoice(hit, q), key = c && `${c.name}|${c.detail}`; if (c && !seen.has(key)) {seen.add(key); out.push(c);}}
+  return out;
+}
+// Landmarks around a found place, from Wikipedia's nearby-article search (ranked by article prominence, so the Eiffel
+// Tower comes before a Paris side street). Only the place's coordinates are sent, never GPS. The short English
+// description tells places apart from events, governments and companies that also have coordinates.
+export const LANDMARKS = Object.freeze({wikipedia: 'https://en.wikipedia.org/w/api.php', timeoutMs: 8000, minKm: 1, maxKm: 10, fetch: 50, show: 6});
+const KIND = /\b(tower|museum|cathedral|church|basilica|temple|mosque|synagogue|shrine|cemetery|monument|memorial|arch|bridge|palace|castle|fort|fortress|citadel|park|garden|gardens|square|plaza|opera house|theatre|theater|library|stadium|arena|mausoleum|building|skyscraper|market|lighthouse|beach|waterfall|falls|lake|mountain|hill|hills|island|zoo|aquarium|gallery|house|mansion|residence|complex|ossuary|statue|fountain|landmark|hall|abbey|monastery|chapel|ruins|archaeological site|historic site|formation|avenue|boulevard|street|promenade|pier|harbou?r|observatory|amphitheat(re|er)|pyramid|gate|wall|canal|viewpoint|reserve|sanctuary|hotel|station|terminal|courthouse|capitol|mall|town hall|city hall|centre|center)\b/;
+const NOT = /\b(former|demolished|destroyed|defunct|proposed|planned|cancelled|canceled)\b|attack|bombing|shooting|battle|siege|ceremony|election|riot|massacre|crash|treaty|government|republic|empire|parliament|assembly|legislat|lower house|upper house|organi[sz]ation|company|fashion|university|college|school|institution|arrondissement|municipality|census|unincorporated|neighbo(u)?rhood|district|commune|county|town in|village in|city in|capital|metropolitan|river|railway line|bus|season|band|team|club|radio|television|tv station|satellite|power station|airport|heliport/;
+export function isLandmark(description) {
+  const d = String(description || '').toLowerCase();
+  return !!d && (d.includes('historic district') || (KIND.test(d) && !NOT.test(d)));
+}
+// Search radius in whole metres (Wikipedia ignores a decimal "5.1km" and falls back to a text search): a quarter of the
+// found place's bounding-box diagonal, so a town searches its own extent and a city its centre.
+export function landmarkRadius(choice) {
+  const [s, n, w, e] = choice?.bbox || [], lat = choice?.point?.[1] || 0;
+  const km = [s, n, w, e].every(Number.isFinite) ? Math.hypot((n - s) * 111.32, (e - w) * 111.32 * Math.cos(lat * Math.PI / 180)) / 4 : LANDMARKS.minKm;
+  return Math.round(Math.min(LANDMARKS.maxKm, Math.max(LANDMARKS.minKm, km)) * 10) * 100;
+}
+export async function searchLandmarks(choice, fetcher = fetch, limit = LANDMARKS.show) {
+  const [lng, lat] = choice?.point || [];
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return [];
+  const radius = landmarkRadius(choice), near = `nearcoord:${radius}m,${lat.toFixed(5)},${lng.toFixed(5)}`;
+  const url = `${LANDMARKS.wikipedia}?action=query&format=json&formatversion=2&origin=*&generator=search&gsrsearch=${encodeURIComponent(near)}&gsrlimit=${LANDMARKS.fetch}&prop=description%7Ccoordinates&colimit=max`;
+  const response = await fetcher(url, {signal: AbortSignal.timeout(LANDMARKS.timeoutMs), credentials: 'omit', referrerPolicy: 'no-referrer'});
+  if (!response.ok) throw new Error(`Landmark search returned ${response.status}.`);
+  const pages = [...((await response.json())?.query?.pages || [])].sort((a, b) => (a.index || 0) - (b.index || 0));
+  const self = String(choice.name || '').toLowerCase(), out = [];
+  for (const p of pages) {
+    const at = p.coordinates?.[0], title = String(p.title || '').trim();
+    if (!at || !Number.isFinite(at.lat) || !Number.isFinite(at.lon) || !title || !isLandmark(p.description)) continue;
+    if (Math.hypot((at.lat - lat) * 111320, (at.lon - lng) * 111320 * Math.cos(lat * Math.PI / 180)) > radius * 1.2) continue;
+    if (title.toLowerCase() === self || title.toLowerCase().startsWith(`${self},`)) continue;
+    out.push({point: [at.lon, at.lat], name: title.replace(/\s*\([^)]*\)$/, '').slice(0, 80), detail: String(p.description).slice(0, 90)});
+    if (out.length >= limit) break;
+  }
   return out;
 }
 export async function geocode(query, fetcher = fetch) {

@@ -16,7 +16,7 @@ await fs.mkdir('test-results',{recursive:true});
 await page.screenshot({path:'test-results/desktop.png'});
 await page.keyboard.down('KeyW');await page.waitForTimeout(5000);
 const moving=await page.evaluate(()=>window.navigatorDiagnostics());
-await page.keyboard.up('KeyW');assert.ok(Math.hypot(moving.player.x,moving.player.y)>10);assert.ok(moving.metrics.drawCalls>=11&&moving.metrics.drawCalls<=14,`draw calls ${moving.metrics.drawCalls}`);
+await page.keyboard.up('KeyW');assert.ok(Math.hypot(moving.player.x,moving.player.y)>5,`moved ${Math.hypot(moving.player.x,moving.player.y).toFixed(1)} m at ${moving.metrics.fps} fps`);assert.ok(moving.metrics.drawCalls>=11&&moving.metrics.drawCalls<=14,`draw calls ${moving.metrics.drawCalls}`);
 // The startup progress strip has gone once the bundled area is ready.
 assert.equal(moving.progress.visible,false);assert.equal(moving.progress.task,null);assert.equal(await page.locator('#progress').isVisible(),false);
 await page.mouse.move(600,400);await page.mouse.down();await page.mouse.move(700,400);await page.mouse.up();

@@ -49,6 +49,13 @@ export function boundedPosition(x, y) {
   const length = Math.hypot(x, y);
   return length > LIMITS.movement ? [x * LIMITS.movement / length, y * LIMITS.movement / length] : [x, y];
 }
+// Manual movement speed (m/s) after holding a move key or arrow for `held` seconds: walking pace at first, so a tap is
+// a small step, then an ease-in-out ramp to 7 mph (3.13 m/s) over `rampS`.
+export const MOVE = Object.freeze({walk: 1.4, top: 7 * 0.44704, rampS: 2});
+export function moveSpeed(held) {
+  const t = Math.min(1, Math.max(0, (held || 0) / MOVE.rampS));
+  return MOVE.walk + (MOVE.top - MOVE.walk) * t * t * (3 - 2 * t);
+}
 // Manual exploration (v0.1.26) may walk to the edge of the loaded area, `margin` metres short of it, instead of the
 // old 120 m circle. Returns [x, y, hit] with `hit` true when the step was clamped at the edge.
 export function boundedToArea(x, y, [south, west, north, east], origin = ORIGIN, margin = 10) {

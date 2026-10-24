@@ -5,7 +5,7 @@ import {updateTravelBearing} from './chevron.js';
 import {createPositioning} from './positioning.js';
 import {createSunCheck} from './sun-check.js';
 import {smoothHeading, smoothPosition, headingDelta, areaCovers, edgeRunway, shouldPrefetch, liveSquare, retryDelay, deadReckon, snapDistanceFor, courseWeight, fuseHeading, createTrack, SENSORS} from './sensors.js';
-import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition, boundedToArea, areaEdgeDistance} from './world.js';
+import {ORIGIN, BBOX, LIMITS, toLngLat, toLocal, boundedPosition, boundedToArea, areaEdgeDistance, moveSpeed} from './world.js';
 import {nearestStreet,streetSegments,labelPoint} from './street-label.js';
 import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import {progressFraction, progressText, updateRate} from './progress.js';
@@ -19,7 +19,7 @@ import './style.css';
 const $=id=>document.getElementById(id);
 maplibregl.setWorkerUrl(mapWorkerUrl);
 maplibregl.setWorkerCount(1);
-const player={x:0,y:0,heading:38,pitch:0,travelBearing:null,chevronHeading:null};
+const player={x:0,y:0,heading:38,pitch:0,speed:0,travelBearing:null,chevronHeading:null};
 // The loaded OSM area. `origin` is the local metre frame; GPS re-anchors it when the view radius leaves `bbox`.
 const area={origin:ORIGIN,bbox:BBOX,live:false,radius:null,provider:'Bundled OSM',cached:false,kinds:null,prior:false};
 // GPS target pose. The render loop eases the player toward `target`; `rawHeading` is the latest compass reading.
@@ -390,7 +390,8 @@ function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min
   if(sensorCompass&&Math.abs(headingDelta(player.chevronHeading,targetHeading))>SENSORS.idleHeading)settled=false;
  }else{
   let f=Number(keys.has('KeyW'))-Number(keys.has('KeyS')),s=Number(keys.has('KeyD'))-Number(keys.has('KeyA'));const length=Math.hypot(f,s);if(length>1){f/=length;s/=length;}
-  const h=player.heading*Math.PI/180,nx=player.x+(Math.sin(h)*f+Math.cos(h)*s)*3*dt,ny=player.y+(Math.cos(h)*f-Math.sin(h)*s)*3*dt;
+  moveHeld=f||s?moveHeld+dt:0;const v=moveSpeed(moveHeld);player.speed=f||s?v:0;
+  const h=player.heading*Math.PI/180,nx=player.x+(Math.sin(h)*f+Math.cos(h)*s)*v*dt,ny=player.y+(Math.cos(h)*f-Math.sin(h)*s)*v*dt;
   const oldX=player.x,oldY=player.y;
   const [bx,by,hit]=boundedToArea(nx,ny,area.bbox,area.origin);[player.x,player.y]=[bx,by];updateTravelBearing(player,player.x-oldX,player.y-oldY);
   if(hit)reachEdge();else if(edge.asked&&areaEdgeDistance(player.x,player.y,area.bbox,area.origin)>edge.rearm)edge.asked=false;
@@ -400,8 +401,9 @@ function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min
  if(now-uiTime>200){updateUI();drawMini();uiTime=now;}
  if(keys.size||!settled)frameId=requestAnimationFrame(loop);else{metrics.fps=null;updateUI();drawMini();}
 }
+let moveHeld=0;
 function start(){if(!frameId&&ready){lastTime=performance.now();frameId=requestAnimationFrame(loop);}}
-function stop(){if(drag){const id=drag.id;drag=null;if($('map').hasPointerCapture(id))$('map').releasePointerCapture(id);}keys.clear();if(frameId)cancelAnimationFrame(frameId);frameId=0;document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));metrics.fps=null;}
+function stop(){moveHeld=0;if(drag){const id=drag.id;drag=null;if($('map').hasPointerCapture(id))$('map').releasePointerCapture(id);}keys.clear();if(frameId)cancelAnimationFrame(frameId);frameId=0;document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));metrics.fps=null;}
 const supported=new Set(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','ArrowUp','ArrowDown']);
 addEventListener('keydown',e=>{if(!supported.has(e.code)||$('guide').open||$('place-dialog').open||$('edge-dialog').open||$('gps-dialog').open||$('sun-dialog').open||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();keys.add(e.code);start();});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',stop);addEventListener('focus',start);
 document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();positioning.pause();roadWorker?.postMessage({type:'pause'});}else{positioning.resume();if(roadCacheEnabled&&!roadHold)roadWorker?.postMessage({type:'resume'});start();}});

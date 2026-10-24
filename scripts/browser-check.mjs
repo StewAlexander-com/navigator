@@ -75,7 +75,7 @@ await gpsPage.waitForTimeout(800);await gpsPage.locator('#stats-toggle').click()
 await gpsPage.setViewportSize({width:390,height:844});await gpsPage.waitForTimeout(300);await gpsPage.screenshot({path:'test-results/gps-mobile.png'});assert.equal(await gpsPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.equal((await diag(gpsPage)).layout.overlaps,0);assert.equal((await diag(gpsPage)).layout.fixedOverlaps,0);
 // Stopping returns to manual controls at the current place.
 await gpsPage.locator('#gps').click();d=await diag(gpsPage);assert.equal(d.sensors.mode,'manual');assert.equal(d.sensors.position,'off');
-const before=(await diag(gpsPage)).player;await gpsPage.keyboard.down('KeyW');await gpsPage.waitForTimeout(400);await gpsPage.keyboard.up('KeyW');assert.ok(Math.hypot((await diag(gpsPage)).player.x-before.x,(await diag(gpsPage)).player.y-before.y)>.5);
+const before=(await diag(gpsPage)).player;await gpsPage.keyboard.down('KeyW');await gpsPage.waitForTimeout(700);await gpsPage.keyboard.up('KeyW');assert.ok(Math.hypot((await diag(gpsPage)).player.x-before.x,(await diag(gpsPage)).player.y-before.y)>.5);
 assert.deepEqual(gpsErrors,[]);
 // Denied geolocation permission: the app must stay usable in manual mode and say so.
 const deniedContext=await browser.newContext({viewport:{width:1440,height:900}});const deniedPage=await deniedContext.newPage();const deniedErrors=[];deniedPage.on('pageerror',e=>deniedErrors.push(e.message));

@@ -58,14 +58,16 @@ export function boundedPosition(x, y) {
   const length = Math.hypot(x, y);
   return length > LIMITS.movement ? [x * LIMITS.movement / length, y * LIMITS.movement / length] : [x, y];
 }
-// Manual movement speed (m/s) after holding a move key or arrow for `held` seconds: walking pace at first, so a tap is
-// a small step, then an ease-in-out ramp to 7 mph (3.13 m/s) over `rampS`; held on from `fastFrom` s, a second ramp
-// over `fastS` s reaches 15 mph (6.71 m/s) for crossing an area quickly.
+// Manual movement speed (m/s) after holding a move key or arrow for `held` seconds: 2.5 mph at first, so a tap is a
+// small step, then ease-in-out ramps, each [start s, length s, mph reached]: 7 mph by 2 s, 15 mph from 7 s to 10 s,
+// and 35 mph (15.6 m/s) from 14 s to 19 s for crossing an area quickly.
 const MPH = 0.44704, ease = t => {t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t);};
-export const MOVE = Object.freeze({walk: 1.4, top: 7 * MPH, rampS: 2, fast: 15 * MPH, fastFrom: 7, fastS: 3});
+export const MOVE = Object.freeze({walk: 2.5 * MPH, stages: Object.freeze([[0, 2, 7], [7, 3, 15], [14, 5, 35]].map(Object.freeze))});
 export function moveSpeed(held) {
   const t = held || 0;
-  return MOVE.walk + (MOVE.top - MOVE.walk) * ease(t / MOVE.rampS) + (MOVE.fast - MOVE.top) * ease((t - MOVE.fastFrom) / MOVE.fastS);
+  let v = MOVE.walk, from = MOVE.walk;
+  for (const [start, length, mph] of MOVE.stages) {v += (mph * MPH - from) * ease((t - start) / length); from = mph * MPH;}
+  return v;
 }
 // Manual exploration (v0.1.26) may walk to the edge of the loaded area, `margin` metres short of it, instead of the
 // old 120 m circle. Returns [x, y, hit] with `hit` true when the step was clamped at the edge.

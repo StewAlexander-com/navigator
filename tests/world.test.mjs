@@ -30,11 +30,10 @@ test('v0.1.26 manual movement reaches the area edge (less a margin) and reports 
  [x,y,hit]=boundedToArea(450,-20,bbox,ORIGIN);assert.equal(hit,true);assert.ok(Math.abs(x-390)<1,`x ${x}`);assert.equal(y,-20);
  assert.ok(Math.abs(areaEdgeDistance(0,0,bbox,ORIGIN)-400)<1);assert.ok(areaEdgeDistance(0,395,bbox,ORIGIN)<6);
 });
-test('holding a move key ramps to 7 mph in 2 s, then from 7 s to 15 mph by 10 s, smoothly',async()=>{
- const {moveSpeed,MOVE}=await import('../src/world.js');const mph=v=>v/0.44704;
- assert.equal(moveSpeed(0),1.4);assert.equal(moveSpeed(undefined),1.4);
- assert.ok(Math.abs(mph(moveSpeed(MOVE.rampS))-7)<1e-9);assert.ok(Math.abs(mph(moveSpeed(MOVE.fastFrom))-7)<1e-9,'holds 7 mph until 7 s');
- assert.ok(Math.abs(mph(moveSpeed(10))-15)<1e-9);assert.equal(moveSpeed(60),moveSpeed(10));
- assert.ok(MOVE.rampS>=1.5&&MOVE.rampS<=3);assert.ok(MOVE.fastFrom>=7&&MOVE.fastFrom+MOVE.fastS<=10);
- let last=MOVE.walk;for(let t=0;t<=12;t+=1/60){const v=moveSpeed(t);assert.ok(v>=last-1e-12);assert.ok(v-last<.06,`jump at ${t.toFixed(2)} s`);last=v;}
+test('holding a move key starts at 2.5 mph and ramps to 7 mph by 2 s, 15 mph by 10 s and 35 mph by 19 s, smoothly',async()=>{
+ const {moveSpeed,MOVE}=await import('../src/world.js');const mph=t=>moveSpeed(t)/0.44704,near=(a,b)=>Math.abs(a-b)<1e-9;
+ assert.ok(near(mph(0),2.5));assert.ok(near(mph(undefined),2.5));
+ assert.ok(near(mph(2),7));assert.ok(near(mph(7),7),'holds 7 mph until 7 s');assert.ok(near(mph(10),15));assert.ok(near(mph(14),15),'holds 15 mph until 14 s');
+ assert.ok(near(mph(19),35));assert.equal(moveSpeed(120),moveSpeed(19));assert.equal(MOVE.stages.length,3);
+ let last=MOVE.walk;for(let t=0;t<=22;t+=1/60){const v=moveSpeed(t);assert.ok(v>=last-1e-12);assert.ok(v-last<.06,`jump at ${t.toFixed(2)} s`);last=v;}
 });

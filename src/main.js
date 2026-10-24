@@ -226,7 +226,8 @@ map.on('load',()=>{worldLayer=createWorldLayer(player,metrics,project=>{
 });map.addLayer(worldLayer);camera();if(!startFromUrl())request();});
 map.on('error',e=>{console.error(e.error);notice('The 3D view encountered an error. Reload to try again.');});
 map.getCanvas().addEventListener('webglcontextlost',e=>{e.preventDefault();stop();notice('Graphics context lost. Reload the page to restore this area.');});
-function camera(){const h=player.heading*Math.PI/180,eye=toLngLat(player.x,player.y,area.origin),ahead=toLngLat(player.x+Math.sin(h)*20,player.y+Math.cos(h)*20,area.origin);const z=1.65+(player.z||0)+viewLift;map.jumpTo(map.calculateCameraOptionsFromTo(eye,z,ahead,z+Math.tan(player.pitch*Math.PI/180)*20));}
+// On a bridge deck the eye rides on it; under one it stays on the road below (structures.js).
+function camera(){player.deck=standingHeight(bridges,player.x,player.y,player.deck);player.z=player.deck;const h=player.heading*Math.PI/180,eye=toLngLat(player.x,player.y,area.origin),ahead=toLngLat(player.x+Math.sin(h)*20,player.y+Math.cos(h)*20,area.origin);const z=1.65+(player.z||0)+viewLift;map.jumpTo(map.calculateCameraOptionsFromTo(eye,z,ahead,z+Math.tan(player.pitch*Math.PI/180)*20));}
 const positioning=createPositioning({
  onRaw(fix,reason){logFix(fix,reason);},
  onFix(fix,course){
@@ -311,6 +312,7 @@ worker.onmessage=({data})=>{
  if(data.bridges){bridges=data.bridges;worldLayer.setBridges(bridges);player.deck=null;}
  if(data.roads){baseRoads=data.roads;roads=cacheRoads?.length?cacheRoads:baseRoads;worldLayer.setRoads(roads);}
  if(explore.arrive&&data.roads){explore.arrive=false;const start=roadStart(baseRoads,player);if(start?.moved){Object.assign(player,{x:start.x,y:start.y,heading:start.heading,deck:null});camera();}}
+ if(data.bridges)camera();
  if(data.geometry)worldLayer.setBuildings({...data.geometry,far:data.far});if(data.extras){worldLayer.setSurfaces(data.extras.surfaces);worldLayer.setTrees(data.extras.trees);metrics.extras={areas:data.extras.areaCount,trees:data.extras.treeCount,mapped:data.extras.mappedTrees};}metrics.stream=data.stream;lastBuild=[data.x,data.y];lastStreamHeading=data.heading;
  if(Math.hypot(player.x-data.x,player.y-data.y)>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  metrics.queryMs=data.ms;
@@ -400,8 +402,6 @@ function loop(now){frameId=0;if(!ready||document.hidden)return;const dt=Math.min
   const [bx,by,hit]=boundedToArea(nx,ny,area.bbox,area.origin);[player.x,player.y]=[bx,by];updateTravelBearing(player,player.x-oldX,player.y-oldY);
   if(hit)reachEdge();else if(edge.asked&&areaEdgeDistance(player.x,player.y,area.bbox,area.origin)>edge.rearm)edge.asked=false;
  }
- // On a bridge deck the eye rides on it; under one it stays on the road below (structures.js).
- player.deck=standingHeight(bridges,player.x,player.y,player.deck);player.z=player.deck;
  camera();
  if(!busy&&(Math.hypot(player.x-lastBuild[0],player.y-lastBuild[1])>12||Math.abs(headingDelta(lastStreamHeading,player.travelBearing??player.heading))>45)){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  if(now-uiTime>200){updateUI();drawMini();uiTime=now;}

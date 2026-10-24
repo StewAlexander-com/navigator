@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Street-sign render check (scripts/sign-render-check.mjs): the app's own signpost meshes and shaders in a bare scene. -->
+<html><head><meta charset="utf-8"><base href="/navigator/"></head><body style="margin:0;background:#000">
+<canvas id="view" width="390" height="844"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import {createWayfinding} from '/navigator/src/wayfinding.js';
+import {SIGN} from '/navigator/src/wayfinding-data.js';
+const canvas = document.getElementById('view'), W = canvas.width, H = canvas.height;
+const renderer = new THREE.WebGLRenderer({canvas, antialias: false, preserveDrawingBuffer: true});
+renderer.setClearColor(0xff00ff, 1);
+const scene = new THREE.Scene(), eye = new THREE.Vector2(), camera = new THREE.PerspectiveCamera(SIGN.fov.phone, W / H, .1, 2000);
+camera.up.set(0, 0, 1);
+const way = createWayfinding(scene, () => {}, eye);
+await way.ready;
+// Blades only: the pole would be counted as sign pixels.
+for (const o of scene.children) if (o.isInstancedMesh) o.visible = false;
+// Three signs in the one merged blade mesh, as in the app; the checked one is first, the others far out of view.
+way.setSigns([{x: 0, y: 0, names: ['West Main Street', 'North Center Street'], bearings: [90, 0], key: 'check'},
+  {x: 900, y: 900, names: ['Harlem Place', 'West 2nd Street'], bearings: [37, 127], key: 'b'}, {x: -900, y: 900, names: ['A Street', 'B Street'], bearings: [10, 100], key: 'c'}]);
+const gl = renderer.getContext(), pixels = new Uint8Array(W * H * 4);
+// One view from `angle` degrees (from +x, counter-clockwise) at `distance` m, looking at the blades. Returns the blade
+// pixel count, the bright (lettering) pixel count, and the face-on pixel count both blades would have at this size.
+function view(angle, distance) {
+  const a = angle * Math.PI / 180; eye.set(Math.cos(a) * distance, Math.sin(a) * distance);
+  const post = way.diagnostics().posts[0], mid = (post.heights[0] + post.heights[1]) / 2;
+  camera.position.set(eye.x, eye.y, SIGN.eye); camera.lookAt(0, 0, mid); camera.updateMatrixWorld();
+  renderer.render(scene, camera);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  let blade = 0, bright = 0;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+    if (r > 240 && g < 15 && b > 240) continue;
+    blade++; if (r > 190 && g > 190 && b > 190) bright++;
+  }
+  const f = H / 2 / Math.tan(SIGN.fov.phone * Math.PI / 360), s = 1.25 * post.scale;
+  const faceOn = 2 * (2.4 * s * f / distance) * (.42 * s * f / distance);
+  return {angle, distance, blade, bright, faceOn, ratio: blade / faceOn};
+}
+window.signViews = (angles, distances) => distances.flatMap(d => angles.map(a => view(a, d)));
+// A contact sheet: one small frame per (angle, distance), for the test report.
+window.signSheet = (angles, distances) => {
+  const cols = angles.length, cw = 98, ch = 212, sheet = document.createElement('canvas'); sheet.width = cols * cw; sheet.height = distances.length * ch;
+  const c = sheet.getContext('2d');
+  distances.forEach((d, row) => angles.forEach((a, col) => {view(a, d); c.drawImage(canvas, col * cw, row * ch, cw, ch); c.fillStyle = '#fff'; c.font = '11px sans-serif'; c.fillText(`${a}° ${d} m`, col * cw + 4, row * ch + 14);}));
+  return sheet.toDataURL('image/png');
+};
+window.signReady = true;
+</script></body></html>

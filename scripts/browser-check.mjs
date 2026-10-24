@@ -2,6 +2,7 @@ import {launchTestBrowser} from './test-browser.mjs';
 import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import {SIGN,signTextPixels} from '../src/wayfinding-data.js';
 // Square downloads only: the optional green/water relations request (v0.1.36) follows each one.
 const isSquare=u=>u.startsWith('https://overpass-api.de/')&&!decodeURIComponent(u).includes('relation[type=multipolygon]');
 const browser=await launchTestBrowser();
@@ -188,6 +189,25 @@ let mebaneStep=0,mebaneBack=0;for(let i=1;i<mebaneProbe.length;i++){const step=m
 assert.equal(mb.sensors.fixes.rejected,0);assert.equal(mb.sensors.fixes.accepted,15);assert.equal(mb.indoor.verdict,null,'never "inside" while driving');assert.ok(mebaneProbe.length>100);assert.ok(mebaneStep<10,`max step ${mebaneStep}`);assert.equal(mebaneBack,0);
 assert.ok(mebaneRequests.filter(isSquare).length<=2);assert.ok(mebaneRequests.filter(u=>!u.startsWith('http://127.0.0.1:4173/')).every(u=>u.startsWith('https://overpass-api.de/')));assert.deepEqual(mebaneErrors,[]);
 await mebaneContext.close();
+// Street signs (v0.1.38), bundled LA on a phone: turn to face the nearest signpost, then back away from it. Both names
+// must be on screen, drawn at the size the legibility model predicts, with capitals at least 10 CSS px tall within 48 m.
+const signContext=await browser.newContext({viewport:{width:390,height:844}});const signPage=await signContext.newPage();const signErrors=[];
+signPage.on('pageerror',e=>signErrors.push(e.message));signPage.on('console',m=>{if(m.type()==='error')signErrors.push(m.text());});
+await signPage.goto('http://127.0.0.1:4173/navigator/');await signPage.waitForFunction(()=>window.navigatorDiagnostics?.().wayfinding?.posts?.length>0,null,{timeout:20000});
+const signPost=async()=>(await diag(signPage)).wayfinding.posts[0];
+const faceSign=async()=>{for(let i=0;i<8;i++){const d=await diag(signPage),p=d.wayfinding.posts[0],want=(Math.atan2(p.x-d.player.x,p.y-d.player.y)*180/Math.PI+360)%360,turn=((want-d.player.heading+540)%360)-180;if(Math.abs(turn)<1.5)return;const key=turn>0?'ArrowRight':'ArrowLeft';await signPage.keyboard.down(key);await signPage.waitForTimeout(Math.max(16,Math.abs(turn)/65*1000*.8));await signPage.keyboard.up(key);await signPage.waitForTimeout(150);}};
+const readSign=async label=>{await signPage.waitForTimeout(400);const d=await diag(signPage),p=d.wayfinding.posts[0],screen=d.wayfinding.screen[0],distance=Math.hypot(p.x-d.player.x,p.y-d.player.y);
+  const model=signTextPixels(distance,844,SIGN.fov.phone);
+  for(const [i,b] of screen.entries()){assert.ok(b,`${label}: ${p.names[i]} behind the eye`);assert.ok(b.x>0&&b.x<390&&b.y>0&&b.y<844,`${label}: ${p.names[i]} off screen at ${Math.round(b.x)},${Math.round(b.y)}`);
+    assert.ok(Math.abs(b.px/model-1)<.2,`${label}: ${p.names[i]} ${b.px.toFixed(1)} px vs model ${model.toFixed(1)} at ${distance.toFixed(0)} m`);if(distance<=48)assert.ok(b.px>=10,`${label}: ${p.names[i]} ${b.px.toFixed(1)} px at ${distance.toFixed(0)} m`);}
+  return {distance,scale:p.scale,px:screen.map(b=>b.px)};};
+const firstSign=await signPost();await faceSign();
+for(let i=0;i<16;i++){const d=await diag(signPage),p=d.wayfinding.posts.find(q=>q.names.join()===firstSign.names.join());if(!p||Math.hypot(p.x-d.player.x,p.y-d.player.y)<30)break;await signPage.keyboard.down('KeyW');await signPage.waitForTimeout(1500);await signPage.keyboard.up('KeyW');await faceSign();}
+const signNear=await readSign('near');assert.ok(signNear.distance<40,`walked to ${signNear.distance} m`);
+await signPage.keyboard.down('KeyS');await signPage.waitForTimeout(5000);await signPage.keyboard.up('KeyS');
+assert.equal((await signPost()).names.join(),firstSign.names.join(),'same signpost after backing away');await faceSign();
+const signFar=await readSign('far');assert.ok(signFar.distance>signNear.distance+10,`backed away ${signNear.distance} → ${signFar.distance} m`);
+await signPage.screenshot({path:'test-results/sign-mobile.png'});assert.deepEqual(signErrors,[]);await signContext.close();
 const gps={firstFixMs,easeMs,final:await diag(gpsPage),drive:{frames:probe.length,maxStepM:maxStep,travelledM:travelled,overpassRequests:driveOverpass,heading:drive.player.heading,fixes:drive.sensors.fixes},mebane:{kinds:mb.area.kinds,buildings:mb.metrics.buildings,maxStepM:mebaneStep,frames:mebaneProbe.length}};
-const results={errors,badResponses,requests,moving,offline,viewport:{width:390,height:844},overflow,gps};await fs.writeFile('test-results/browser-results.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));
+const results={errors,badResponses,requests,moving,offline,viewport:{width:390,height:844},overflow,gps,signs:{near:signNear,far:signFar}};await fs.writeFile('test-results/browser-results.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));
 await browser.close();

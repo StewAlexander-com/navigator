@@ -233,7 +233,7 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
       renderer=new THREE.WebGLRenderer({canvas:m.getCanvas(),context:gl});renderer.autoClear=false;
       ground=new THREE.Mesh(new THREE.PlaneGeometry(1200,1200),materials[1]);ground.position.z=-.04;ground.frustumCulled=false;ground.renderOrder=-3;scene.add(ground);
       chevron=createChevron(player);scene.add(chevron.group);metrics.chevron=chevron.diagnostics();
-      wayfinding=createWayfinding(scene,()=>map?.triggerRepaint());
+      wayfinding=createWayfinding(scene,()=>map?.triggerRepaint(),eye);
     },
     setBuildings(data){
       if(building){scene.remove(building);building.geometry.dispose();metrics.disposedBuffers=(metrics.disposedBuffers||0)+1;}
@@ -250,7 +250,10 @@ export function createWorldLayer(player, metrics, onChevronAnchor=null) {
     },
     setBeacons(list){wayfinding?.setBeacons(list);},
     setSigns(list){wayfinding?.setSigns(list);},
-    wayfindingState(){return wayfinding?.diagnostics()||null;},
+    // Sign names on screen: centre and cap height in CSS pixels of each blade, null when behind the eye.
+    wayfindingState(){const s=wayfinding?.diagnostics();if(!s||!camera||!map)return s||null;const canvas=map.getCanvas();
+      const at=(x,y,z)=>{const v=new THREE.Vector4(x,y,z,1).applyMatrix4(camera.projectionMatrix);return v.w>0?[(v.x/v.w+1)*canvas.clientWidth/2,(1-v.y/v.w)*canvas.clientHeight/2]:null;};
+      s.screen=s.posts.map(p=>p.heights.map(z=>{const c=at(p.x,p.y,z),top=at(p.x,p.y,z+p.text/2),bottom=at(p.x,p.y,z-p.text/2);return c&&top&&bottom?{x:c[0],y:c[1],px:Math.abs(bottom[1]-top[1])}:null;}));return s;},
     setGround(value,biome){groundTone.value=Math.max(0,Math.min(1,Number(value)||0));
       if(biome){earthA.value.fromArray(biome.earth[0]);earthB.value.fromArray(biome.earth[1]);leafTint.value.fromArray(biome.leaf);}
       map?.triggerRepaint();},groundTone(){return groundTone.value;},

@@ -1,6 +1,6 @@
 // Wayfinding data (v0.1.33): street junctions, which of them get a signpost, the next cross street, and the size of the
 // street-level pins under food/landmark names. Pure functions on local metres (x east, y north), unit-tested.
-export const WAYDATA = Object.freeze({signs: 3, signRadius: 110, junctionMerge: 15, corner: 8.4, crossingRadius: 160, visit: 20, trailStep: 3, trailMax: 600});
+export const WAYDATA = Object.freeze({signs: 3, signRadius: 110, junctionMerge: 15, signRepeat: 40, corner: 8.4, crossingRadius: 160, visit: 20, trailStep: 3, trailMax: 600});
 export const PIN_COLORS = Object.freeze({food: '#f2a03a', landmark: '#4ce8e4'});
 const bearingOf = (dx, dy) => (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
 const turn = (a, b) => ((b - a + 540) % 360) - 180;
@@ -38,7 +38,16 @@ export function pickSignposts(junctions, player, {max = WAYDATA.signs, radius = 
     scored.push([d * (ahead ? 1 : 2.2), j]);
   }
   scored.sort((a, b) => a[0] - b[0]);
-  return scored.slice(0, max).map(([, j]) => {
+  // A split carriageway maps one crossing as two or more junctions just over `junctionMerge` apart; one sign per street
+  // pair within `signRepeat` metres.
+  const kept = [];
+  for (const [, j] of scored) {
+    if (kept.length === max) break;
+    const pair = j.streets.slice(0, 2).map(s => s.name).sort().join('|');
+    if (kept.some(k => k.pair === pair && Math.hypot(k.j.x - j.x, k.j.y - j.y) < WAYDATA.signRepeat)) continue;
+    kept.push({pair, j});
+  }
+  return kept.map(({j}) => {
     const [s1, s2] = j.streets, r1 = s1.bearing * Math.PI / 180, r2 = s2.bearing * Math.PI / 180;
     const u = [Math.sin(r1), Math.cos(r1)];
     let v = [Math.sin(r2), Math.cos(r2)];
@@ -65,6 +74,28 @@ export function nextCrossing(junctions, player, streetName, radius = WAYDATA.cro
   const other = best.j.streets.find(s => s.name !== streetName);
   return other ? {name: other.name, distance: best.d} : null;
 }
+// Sign legibility (v0.1.38). A blade keeps its real orientation along its street while seen within `turnFrom` degrees
+// of face-on; past that it turns smoothly toward the viewer (fully face-on when you look straight down its street), so
+// it is never seen edge-on. The 180° turn where the fold flips is invisible because both faces read left to right.
+// Up to `readDistance` the sign is its drawn size; beyond, the signpost grows with distance (up to `grow`×; see signZ), so
+// capitals keep a constant on-screen height out to readDistance × grow (48 m, about half a block). textHeight: cap height
+// of a full-size name at the 1.25× drawn size (Inter capitals are 0.73 em of the 116 px font in a 172 px row of a
+// 0.525 m blade). fov: the vertical field of view fitView() in main.js sets on phones and on wider screens.
+export const SIGN = Object.freeze({turnFrom: 35, readDistance: 12, grow: 4, eye: 1.65, collar: 2.7 * 1.25, textHeight: .73 * 116 / 172 * .42 * 1.25, fov: Object.freeze({phone: 65, wide: 45})});
+export const signScale = d => Math.min(SIGN.grow, Math.max(1, d / SIGN.readDistance));
+// Rendered blade yaw (radians, from +x) for a blade of street yaw `yaw`, seen from (dx, dy) = eye − sign. The vertex
+// shader in wayfinding.js computes the same thing per frame.
+export function bladeYaw(yaw, dx, dy) {
+  const th = ((Math.atan2(dy, dx) - yaw) % Math.PI + Math.PI) % Math.PI - Math.PI / 2, from = SIGN.turnFrom * Math.PI / 180;
+  const x = Math.min(1, Math.max(0, (Math.abs(th) - from) / (Math.PI / 2 - from)));
+  return yaw + th * x * x * (3 - 2 * x);
+}
+// Height of a signpost point at drawn height `z` once grown by `k`. The blades grow about eye height, so a grown sign
+// stays about 12° above the horizon instead of climbing into the screen's top overlays; the pole below the blade collar
+// stretches to stay on the ground. The vertex shaders in wayfinding.js do the same.
+export const signZ = (z, k) => z < SIGN.collar ? z * (SIGN.eye + (SIGN.collar - SIGN.eye) * k) / SIGN.collar : SIGN.eye + (z - SIGN.eye) * k;
+// On-screen cap height in CSS pixels of a full-size name `d` metres away in a viewport `height` pixels tall.
+export const signTextPixels = (d, height, fov) => SIGN.textHeight * signScale(d) * height / (2 * d * Math.tan(fov * Math.PI / 360));
 // Sign-blade text: the conventional abbreviations real street signs use, so names fit and read at a distance.
 const PREFIX = {North: 'N', South: 'S', East: 'E', West: 'W'}, SUFFIX = {Street: 'St', Avenue: 'Ave', Boulevard: 'Blvd', Road: 'Rd', Drive: 'Dr', Place: 'Pl', Lane: 'Ln', Court: 'Ct', Parkway: 'Pkwy', Highway: 'Hwy', Terrace: 'Ter', Square: 'Sq'};
 export function signName(name) {

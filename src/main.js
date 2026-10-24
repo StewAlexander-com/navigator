@@ -13,7 +13,7 @@ import {indoorVerdict, INDOOR} from './indoor.js';
 import {place, placedRect, overlapCount, intersects} from './layout.js';
 import {parseCoordinates,searchPlaces,formatPoint,roadStart} from './places.js';
 import {visibleLabels,infoRows,fetchInfo,LABELS} from './building-labels.js';
-import {WAYDATA,PIN_COLORS,findJunctions,pickSignposts,nextCrossing,pinPose,formatDistance} from './wayfinding-data.js';
+import {WAYDATA,PIN_COLORS,SIGN,findJunctions,pickSignposts,nextCrossing,pinPose,formatDistance} from './wayfinding-data.js';
 import './style.css';
 
 const $=id=>document.getElementById(id);
@@ -183,7 +183,7 @@ const PHASES={downloading:'',parsing:'parsing OSM data',building:'building geome
 // already holds unless `fresh`; neither → bundled snapshot.
 function request({live=false,center=null,radius=null,fix=null,fresh=false,lean=false}={}){if(busy)return false;busy=true;$('refresh').disabled=true;worker.postMessage({type:'load',id:++requestId,url:new URL('osm-snapshot.json',document.baseURI).href,live,center,radius,fix,fresh,lean,heading:player.travelBearing??player.heading,x:center?0:player.x,y:center?0:player.y});beginProgress('area',center?'Downloading the OpenStreetMap area around you':live?'Refreshing this area from OpenStreetMap':'Loading the bundled OpenStreetMap area');return true;}
 const map=new maplibregl.Map({container:'map',style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e6cca8'}}]},center:ORIGIN,zoom:18,pitch:90,maxPitch:95,centerClampedToGround:false,interactive:false,attributionControl:false,pixelRatio:Math.min(devicePixelRatio,1.5),maxTileCacheSize:16,renderWorldCopies:false,canvasContextAttributes:{antialias:false,preserveDrawingBuffer:false}});
-function fitView(){map.setVerticalFieldOfView(innerWidth<700?65:45);if(ready)camera();scheduleLayout();}
+function fitView(){map.setVerticalFieldOfView(innerWidth<700?SIGN.fov.phone:SIGN.fov.wide);if(ready)camera();scheduleLayout();}
 // Overlay layout. Anchored UI (brand and header buttons, area name, compass, minimap, bottom bar, footer, stats) are
 // obstacles; the sun button, view-mode button, notice, indoor pill and road-status line are placed in that priority order
 // into the nearest free slot of their column, then the street pill per frame. A pill shrinks only when no slot fits

@@ -1,6 +1,6 @@
 {
   "name": "navigator",
-  "version": "0.1.37",
+  "version": "0.1.38",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.test.mjs",
     "test:browser": "node scripts/browser-check.mjs",
+    "test:signs": "node scripts/sign-render-check.mjs",
     "test:chevron": "node scripts/chevron-check.mjs",
     "test:sun": "node scripts/sun-check.mjs",
     "test:stream": "node scripts/stream-check.mjs",

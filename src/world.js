@@ -103,11 +103,13 @@ export function parseWorld(raw, origin = ORIGIN) {
   // Country lanes are not 14 m boulevards: in a village or rural square the carriageway follows the road class, so only
   // secondary and larger roads (10 m and up) get painted centre lines.
   if(countryside)for(const r of roads){const w=COUNTRY_WIDTH[r.highway];if(w)r.width=w;}
+  // Homes in a dry climate (adobe, Moroccan riads, outback houses) have flat roofs unless OSM tags a roof shape.
+  const flatHomes=context.biome?.group==='arid';
   for (const {f,rings,bounds,area} of footprints) {
     const landuse=contextLanduse(zones,bounds),nearRoad=landuse?null:nearestRoadClass(bounds,roads);
     const residential=landuse==='residential'||(!landuse&&prior&&residentialRoads.has(nearRoad));
     const h=height(f.properties,{residential,area,countryside:countryside||context.setting==='town'}),heightDefault=!hasHeightTag(f.properties);
-    buildings.push({rings,bounds,height:h,roof:roofOf(f.properties,h),id:f.id,name:String(f.properties.name||'').slice(0,80),info:hasInfoTags(f.properties),kind:placeKind(f.properties),style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior,countryside})});
+    buildings.push({rings,bounds,height:h,roof:roofOf(f.properties,h),...(flatHomes&&!f.properties['roof:shape']?{flat:true}:{}),id:f.id,name:String(f.properties.name||'').slice(0,80),info:hasInfoTags(f.properties),kind:placeKind(f.properties),style:buildingStyle(f.properties,{height:h,area,landuse,heightDefault,nearRoad,prior,countryside})});
   }
   for(const b of buildings)b.frontEdge=storefrontEdge(b,roads);
   // Simple 3D Buildings parts (v0.1.32): each `building:part` is its own extrusion from min_height (or
@@ -215,9 +217,9 @@ export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
       if (pos.length/3 + 36 > budget.vertices) break;
     }
     const base = b.minHeight || 0, top = b.height, crown = rings === b.rings ? towerCrown(b) : null;
-    // Illustrative gable on small rectangular homes (four-point outer ring, ≤ 250 m², not simplified); a tagged gabled
+    // Illustrative gable on small rectangular homes (four-point outer ring, ≤ 250 m², not simplified, not `flat`); a tagged gabled
     // roof on any four-point ring uses the same gable. Everything else: pyramid when tagged, otherwise flat.
-    if (rings === b.rings && rings.length === 1 && rings[0].length === 4 && ((b.style?.kind===1 && !b.roof && ringArea(rings[0])<=250) || b.roof?.shape === 'gable')) {walls(b, rings, base, top); gableRoof(rings[0], top, triangle);}
+    if (rings === b.rings && rings.length === 1 && rings[0].length === 4 && ((b.style?.kind===1 && !b.roof && !b.flat && ringArea(rings[0])<=250) || b.roof?.shape === 'gable')) {walls(b, rings, base, top); gableRoof(rings[0], top, triangle);}
     else if (crown?.setback) {
       const split = base + (top - base) * TOWER.setback;
       walls(b, rings, base, split); roof(rings, split); walls(b, [crown.setback], split, top, false);
@@ -272,7 +274,7 @@ export function buildImpostors(world, budget = {vertices: 3000, buildings: 64}, 
     if (!roof.length) {const [a, c, d, e] = b.bounds; ring = [[a,c],[d,c],[d,e],[a,e]]; roof = [[0,1,2],[0,2,3]]; fallback++;}
     if (pos.length / 3 + ring.length * 6 + roof.length * 3 > budget.vertices) break;
     const len = (p, q) => Math.hypot(q[0]-p[0], q[1]-p[1]), o = b.rings[0];
-    const gabled = b.style?.kind === 1 && b.rings.length === 1 && o.length === 4 && ringArea(o) <= 250;
+    const gabled = b.style?.kind === 1 && !b.flat && b.rings.length === 1 && o.length === 4 && ringArea(o) <= 250;
     const crown = towerCrown(b);
     const h = gabled ? b.height + GABLE_RISE * Math.min(len(o[0], o[1]), len(o[1], o[2])) / 2 : crown?.setback ? b.height * TOWER.setback : b.height;
     prism(ring, roof, 0, h);

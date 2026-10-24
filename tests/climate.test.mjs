@@ -44,3 +44,11 @@ test('a desert town has earth between its buildings and low untagged buildings',
   assert.equal(areaContext({footprints: block, lat: 51.5, lng: -.13}).ground, 0);
   assert.equal(height({building: 'yes'}, {area: 200, countryside: true}), 6.5);
 });
+test('homes in a dry climate have flat roofs unless OSM tags a roof shape', async () => {
+  const {parseWorld} = await import('../src/world.js');
+  const home = (id, lat, lon, tags = {}) => ({type: 'way', id, tags: {building: 'house', ...tags}, geometry: [[0, 0], [0, .0001], [.0001, .0001], [.0001, 0], [0, 0]].map(([a, b]) => ({lat: lat + a, lon: lon + b}))});
+  const at = ([lng, lat]) => parseWorld({elements: [home(1, lat, lng), home(2, lat + .0003, lng, {'roof:shape': 'gabled'}), {type: 'way', id: 3, tags: {highway: 'residential'}, geometry: [{lat, lon: lng - .001}, {lat, lon: lng + .001}]}]}, [lng, lat]).buildings;
+  const desert = at([-111.8315, 33.4152]), southeast = at([-79.3492, 36.0992]);
+  assert.deepEqual(desert.map(b => !!b.flat), [true, false]);
+  assert.deepEqual(southeast.map(b => !!b.flat), [false, false]);
+});

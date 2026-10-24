@@ -63,8 +63,9 @@ varying vec3 local; varying vec3 norm; varying vec2 facade; varying vec2 buildin
 float grain(vec2 p){vec3 q=fract(vec3(p.xyx)*.1031);q+=dot(q,q.yzx+33.33);return fract((q.x+q.y)*q.z);}
 float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(grain(i),grain(i+vec2(1,0)),f.x),mix(grain(i+vec2(0,1)),grain(i+vec2(1,1)),f.x),f.y);}
 // Bare ground between mapped surfaces: paving tiles in a city (ground 0), patchy ground in the countryside (1) in the
-// climate's two earth tones (climate.js): green and brown in a temperate place, red sand in a hot desert.
-vec3 bareGround(vec2 p){vec2 tile=abs(fract(p/2.)-.5);vec3 paving=vec3(.64,.54,.40)*(1.-.10*step(.48,max(tile.x,tile.y)));
+// climate's two earth tones (climate.js): green and brown in a temperate place, red sand in a hot desert. Paving is
+// concrete grey warmed by the local earth, so a subarctic city does not read as sand.
+vec3 bareGround(vec2 p){vec2 tile=abs(fract(p/2.)-.5);vec3 paving=mix(vec3(.58,.57,.54),earthB,.35)*(1.-.10*step(.48,max(tile.x,tile.y)));
  float mottle=vnoise(p/9.)*.65+vnoise(p/2.3)*.35;vec3 earth=mix(earthA,earthB,smoothstep(.45,.8,mottle))*(1.+(grain(floor(p*2.))-.5)*.08);
  return mix(paving,earth,ground);}
 void main(){

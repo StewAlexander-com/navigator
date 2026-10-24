@@ -79,7 +79,8 @@ test('the real Mebane square becomes mostly homes while the bundled Los Angeles 
  const la=parseWorld(JSON.parse(fs.readFileSync(new URL('../public/osm-snapshot.json',import.meta.url))));
  assert.deepEqual(la.kinds,[47,0,26,28,3,13,5]);assert.equal(la.prior,false);assert.ok(la.buildings.every(b=>b.style.evidence!=='footprint inference'));
  // v0.1.32: 11 outlines are drawn as their 31 parts, and 8 part-less towers get an illustrative crown.
- assert.equal(buildGeometry(la,0,0).position.length/3,6891);
+ // v0.1.42: flat roofs above DETAIL.hiddenRoof (out of sight from any eye) are skipped; nothing is simplified.
+ const g=buildGeometry(la,0,0);assert.equal(g.position.length/3,6141);assert.equal(g.simplified,0);assert.equal(g.omitted,0);
 });
 test('building parts, tagged roofs and tower crowns',async()=>{
  const {towerCrown,TOWER}=await import('../src/world.js');

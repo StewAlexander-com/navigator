@@ -24,9 +24,12 @@ test('empty selections release prior geometry and a fresh empty world emits an e
  const stream=createChunkStream(grid());stream.update(0,0,0);const empty=stream.update(10000,10000,0);assert.equal(empty.geometry.position.length,0);assert.equal(empty.stream.resident,0);assert.deepEqual(empty.roads,[]);assert.ok(empty.stream.evicted>0);
  assert.equal(createChunkStream({buildings:[],roads:[]}).update(0,0).geometry.position.length,0);
 });
-test('dense chunks enforce aggregate vertex, building and road budgets',()=>{
+test('dense chunks enforce aggregate vertex and road budgets, simplifying before omitting',()=>{
  const world=grid();world.buildings=world.buildings.flatMap(b=>Array.from({length:50},(_,i)=>({...b,id:b.id+'/'+i})));world.roads=Array.from({length:2000},(_,i)=>({points:[[i%12,0],[i%12,20]],width:5}));
- const r=createChunkStream(world).update(0,0,45);assert.ok(r.geometry.count<=160);assert.ok(r.geometry.position.length/3<=90000);assert.ok(r.roads.length*6<=14400);assert.ok(r.geometry.omitted>0);
+ const r=createChunkStream(world).update(0,0,45);assert.ok(r.geometry.count<=LIMITS.buildings);assert.ok(r.geometry.position.length/3<=90000);assert.ok(r.roads.length*6<=14400);assert.equal(r.geometry.omitted,0);
+ // 400 footprints per chunk overflow its vertex budget: the furthest become façades and boxes, and only then are any omitted.
+ world.buildings=grid().buildings.flatMap(b=>Array.from({length:400},(_,i)=>({...b,rings:[Array.from({length:12},(_,k)=>[b.bounds[0]+10+10*Math.cos(k/12*2*Math.PI)+i%20,b.bounds[1]+10+10*Math.sin(k/12*2*Math.PI)+(i/20|0)])],id:b.id+'/'+i})));
+ const d=createChunkStream(world).update(0,0,45);assert.ok(d.geometry.position.length/3<=LIMITS.vertices);assert.ok(d.geometry.facades>0&&d.geometry.boxes>0,JSON.stringify({f:d.geometry.facades,b:d.geometry.boxes,o:d.geometry.omitted}));assert.ok(d.geometry.count>d.geometry.omitted);
 });
 test('a large footprint intersecting the radius is considered even if its owning cell lies outside it',()=>{
  const world={buildings:[{rings:[[[100,-20],[900,-20],[900,20],[100,20]]],bounds:[100,-20,900,20],height:10,id:'long'}],roads:[]};const r=createChunkStream(world).update(0,0);assert.equal(r.geometry.count,1);
@@ -41,7 +44,7 @@ test('Prototype G: near chunks get full extrusion, far chunks silhouettes, with 
  const out=h.update(0,-(LOD.near+LOD.hysteresis+2),0);assert.equal(out.stream.lod.near,0);assert.equal(out.stream.lod.far,1);
  assert.equal(h.update(0,-(LOD.near+LOD.hysteresis-2),0).stream.lod.near,0,'re-entry needs the near boundary, not the hysteresis edge');
  // Dense world: chunks over the full-detail budget are downgraded to silhouettes, not dropped.
- const dense={buildings:[],roads:[]};for(let x=-3;x<=2;x++)for(let y=-3;y<=2;y++)for(let i=0;i<20;i++){const a=x*128+4+i*6,b=y*128+4;dense.buildings.push({rings:[[[a,b],[a+5,b],[a+5,b+120],[a,b+120]]],bounds:[a,b,a+5,b+120],height:12,id:`${x}:${y}:${i}`});}
+ const dense={buildings:[],roads:[]};for(let x=-3;x<=2;x++)for(let y=-3;y<=2;y++)for(let i=0;i<300;i++){const a=x*128+4+i*.4,b=y*128+4;dense.buildings.push({rings:[[[a,b],[a+3,b],[a+5,b+2],[a+5,b+118],[a+3,b+120],[a,b+120],[a-1,b+60],[a,b+1]]],bounds:[a-1,b,a+5,b+120],height:12,id:`${x}:${y}:${i}`});}
  for(let x=-3;x<=2;x++)for(let y=-3;y<=2;y++){const a=x*128+1,b=y*128+1;dense.buildings.push({rings:[[[a,b],[a+126,b],[a+126,b+126],[a,b+126]]],bounds:[a,b,a+126,b+126],height:3,id:`${x}:${y}:plaza`});}
  const d=createChunkStream(dense).update(0,0,45);assert.ok(d.stream.lod.downgraded>0,JSON.stringify(d.stream.lod));assert.ok(d.far.count>0);assert.ok(d.geometry.count<=LIMITS.buildings);
  // Silhouette geometry: a 40-point circle simplifies to at most 10 corners; walls + roof only.

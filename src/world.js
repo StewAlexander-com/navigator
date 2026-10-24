@@ -3,7 +3,7 @@ import osmtogeojson from 'osmtogeojson';
 import {areaContext, isCountryside} from './context.js';
 import {climateProfile} from './climate.js';
 import {ShapeUtils, Vector2} from 'three';
-import {bridgePieces, emitBridge, emitShaped} from './structures.js';
+import {BRIDGE, bridgePieces, emitBridge, emitShaped} from './structures.js';
 
 export const ORIGIN = [-118.2462058, 34.0510824];
 export const BBOX = [34.0477, -118.2490, 34.0538, -118.2417];
@@ -11,7 +11,15 @@ export const BBOX = [34.0477, -118.2490, 34.0538, -118.2417];
 // Above walking pace the half-size grows `areaPerSpeed` metres per m/s to `areaMax`, the centre leads the fix by `areaLeadS`
 // seconds of travel, the next square is prefetched `prefetchLeadS` seconds (at least `prefetchMargin` metres) before the edge,
 // and the worker keeps the last `squares` parsed squares (at most `squareBytes` of source responses) for the session.
-export const LIMITS = Object.freeze({radius: 180, movement: 120, area: 400, areaFallback: 250, areaMax: 1000, areaPerSpeed: 30, areaLeadS: 6, prefetchLeadS: 8, prefetchMargin: 100, squares: 8, squareBytes: 16 * 1024 * 1024, vertices: 90000, buildings: 160, responseBytes: 8 * 1024 * 1024});
+// `buildings` is only a sanity cap: the GPU cost is vertices, so detail is budgeted by `vertices` (see DETAIL).
+export const LIMITS = Object.freeze({radius: 180, movement: 120, area: 400, areaFallback: 250, areaMax: 1000, areaPerSpeed: 30, areaLeadS: 6, prefetchLeadS: 8, prefetchMargin: 100, squares: 8, squareBytes: 16 * 1024 * 1024, vertices: 90000, buildings: 4000, responseBytes: 8 * 1024 * 1024});
+// Detail tiers (v0.1.42), game-style: a building is drawn in full (exact footprint, gable, crown), as a `facade`
+// (outer ring simplified to ≤ `facadePoints` corners with a flat top; the shader still paints its windows, so from the
+// street it reads the same), or as its bounding `box`, and dropped only when even a box no longer fits the vertex
+// budget. A flat roof above `hiddenRoof` is never drawn: the highest eye is 1.65 m over a third-layer bridge deck
+// (18.2 m), and from below a roof plane is hidden by its own walls. When even boxes would not fit, boxes may take at most
+// `coverage` of the budget so the nearest buildings keep their detail and only the furthest are left out (and reported).
+export const DETAIL = Object.freeze({facadePoints: 10, facadeTolerance: 1.5, box: 30, coverage: .75, hiddenRoof: 1.65 + 3 * BRIDGE.clearance + 6});
 const M = 111319.49079327358;
 // Local metres are east/north of an origin; the origin is the bundled LA point unless a GPS area re-anchors it.
 export const toLocal = ([lng, lat], origin = ORIGIN) => [(lng - origin[0]) * M * Math.cos(origin[1] * Math.PI / 180), (lat - origin[1]) * M];
@@ -207,6 +215,7 @@ export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
     code=b.style?.kind||0;
   }
   function roof(rings, z, rise = 0) {
+    if (rise <= 0 && z > DETAIL.hiddenRoof) return;
     if (rise > 0 && rings.length === 1) {
       const r = rings[0], cx = r.reduce((s, p) => s + p[0], 0) / r.length, cy = r.reduce((s, p) => s + p[1], 0) / r.length, apex = [cx, cy, z + rise];
       for (let i = 0; i < r.length; i++) {const a = [...r[i], z], c = [...r[(i+1)%r.length], z], u = [c[0]-a[0], c[1]-a[1], 0], w = [apex[0]-a[0], apex[1]-a[1], rise];
@@ -222,20 +231,30 @@ export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
   for (const p of pool) if (p.bridge && distanceToBox(p.bounds, x, y) <= LIMITS.radius && pos.length / 3 + p.points.length * 90 <= budget.vertices) {floor = Math.min(255, Math.round(p.width * 10)); emitBridge(p, emit);}
   // Landmark shapes (churches, mosques, temples…) come first, so a chunk's building cap never drops them.
   const candidates = pool.filter(b => !b.bridge && !b.hasParts && distanceToBox(b.bounds,x,y) <= LIMITS.radius).sort((a,b)=>!!b.style?.shape-!!a.style?.shape||distanceToBox(a.bounds,x,y)-distanceToBox(b.bounds,x,y));
-  let count = 0, simplified = 0;
-  for (const b of candidates) {
+  // Tier choice keeps room for the cheapest version of every building still to come: full detail only while the rest
+  // can still be façades, a façade only while the rest can still be boxes.
+  const facadeRing = b => b.rings[0].length <= DETAIL.facadePoints ? b.rings[0] : simplifyRing(b.rings[0], DETAIL.facadeTolerance, DETAIL.facadePoints);
+  const drawable = budget.vertices * DETAIL.coverage / DETAIL.box | 0;
+  const plan = (candidates.length * DETAIL.box > budget.vertices ? candidates.slice(0, drawable) : candidates).map(b => {const ring = facadeRing(b); return {b, ring, full: b.rings.reduce((s,r)=>s+r.length*9,0)+b.rings.length*6+48+(b.style?.shape?1200:0), facade: ring.length * 9 + 6};});
+  let count = 0, facades = 0, boxes = 0, reserveFacade = plan.reduce((s, p) => s + p.facade, 0), reserveBox = plan.length * DETAIL.box;
+  for (const {b, ring, full, facade} of plan) {
+    reserveFacade -= facade; reserveBox -= DETAIL.box;
     if (count >= budget.buildings) break;
+    const room = budget.vertices - pos.length / 3;
+    if (room < DETAIL.box) break;
     let rings = b.rings;code=b.style?.kind||0;floor=Math.round((b.style?.floorHeight||3.2)*10);
-    const required = rings.reduce((s,r)=>s+r.length*9,0)+rings.length*6+48+(b.style?.shape?1200:0);
-    if (b.style?.shape && pos.length/3 + required <= budget.vertices && emitShaped(b, emit)) {count++; continue;}
-    if (pos.length/3 + required > budget.vertices) {
-      const [a,c,d,e] = b.bounds; rings = [[[a,c],[d,c],[d,e],[a,e]]]; simplified++;
-      if (pos.length/3 + 36 > budget.vertices) break;
+    const base = b.minHeight || 0, top = b.height;
+    if (full + reserveFacade > room) {
+      // Façade or box: walls and a flat top only, no storefront edge, gable or crown.
+      const box = facade + reserveBox > room;
+      if (box) {const [a,c,d,e] = b.bounds; rings = [[[a,c],[d,c],[d,e],[a,e]]]; boxes++;} else {rings = [ring]; facades++;}
+      walls(b, rings, base, top, false); roof(rings, top); count++; continue;
     }
-    const base = b.minHeight || 0, top = b.height, crown = rings === b.rings ? towerCrown(b) : null;
-    // Illustrative gable on small rectangular homes (four-point outer ring, ≤ 250 m², not simplified, not `flat`); a tagged gabled
+    if (b.style?.shape && emitShaped(b, emit)) {count++; continue;}
+    const crown = towerCrown(b);
+    // Illustrative gable on small rectangular homes (four-point outer ring, ≤ 250 m², not `flat`); a tagged gabled
     // roof on any four-point ring uses the same gable. Everything else: pyramid when tagged, otherwise flat.
-    if (rings === b.rings && rings.length === 1 && rings[0].length === 4 && ((b.style?.kind===1 && !b.roof && !b.flat && ringArea(rings[0])<=250) || b.roof?.shape === 'gable')) {walls(b, rings, base, top); gableRoof(rings[0], top, triangle);}
+    if (rings.length === 1 && rings[0].length === 4 && ((b.style?.kind===1 && !b.roof && !b.flat && ringArea(rings[0])<=250) || b.roof?.shape === 'gable')) {walls(b, rings, base, top); gableRoof(rings[0], top, triangle);}
     else if (crown?.setback) {
       const split = base + (top - base) * TOWER.setback;
       walls(b, rings, base, split); roof(rings, split); walls(b, [crown.setback], split, top, false);
@@ -243,13 +262,13 @@ export function buildGeometry(world, x = 0, y = 0, budget = LIMITS) {
       else roof([crown.setback], top);
     } else {
       // A tagged height includes its roof, so a pyramid's eaves sit `roof:height` below it.
-      const rise = rings === b.rings && b.roof?.shape === 'pyramid' ? b.roof.height : 0;
+      const rise = b.roof?.shape === 'pyramid' ? b.roof.height : 0;
       walls(b, rings, base, top - rise); roof(rings, top - rise, rise);
       if (crown?.penthouse) {code = 5; walls({style: {kind: 5}}, [crown.penthouse], top, top + TOWER.penthouseHeight, false); roof([crown.penthouse], top + TOWER.penthouseHeight);}
     }
     count++;
   }
-  return {position: new Float32Array(pos), normal: new Float32Array(normal), uv: new Float32Array(uv), style:new Uint8Array(styles), count, simplified, omitted: candidates.length-count};
+  return {position: new Float32Array(pos), normal: new Float32Array(normal), uv: new Float32Array(uv), style:new Uint8Array(styles), count, facades, boxes, simplified: facades + boxes, omitted: candidates.length-count};
 }
 // Prototype G far field. Each building becomes a flat-shaded silhouette prism: its outer ring simplified (Visvalingam,
 // dropping corners that enclose less than `tolerance`² m², at most `maxPoints` corners), walls plus a flat roof, no holes,
@@ -266,7 +285,7 @@ export function simplifyRing(ring, tolerance = 1.5, maxPoints = 10) {
   }
   return r;
 }
-export function buildImpostors(world, budget = {vertices: 3000, buildings: 64}, {tolerance = 1.5, maxPoints = 10} = {}) {
+export function buildImpostors(world, budget = {vertices: 3000, buildings: Infinity}, {tolerance = 1.5, maxPoints = 10} = {}) {
   const pos = [], normal = [], uv = [], styles = []; let code = 0;
   const triangle = (a, b, c, n) => {pos.push(...a, ...b, ...c); normal.push(...n, ...n, ...n); uv.push(0,0,0,0,0,0); styles.push(code,32,code,32,code,32);};
   let count = 0, fallback = 0;
@@ -274,7 +293,7 @@ export function buildImpostors(world, budget = {vertices: 3000, buildings: 64}, 
   function prism(ring, roof, z0, z1, rise = 0) {
     if (roof === 'pyramid') {const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length, cy = ring.reduce((s, p) => s + p[1], 0) / ring.length;
       for (let i = 0; i < ring.length; i++) {const a = ring[i], c = ring[(i+1)%ring.length], mx = (a[0]+c[0])/2 - cx, my = (a[1]+c[1])/2 - cy, l = Math.hypot(mx, my, rise) || 1; triangle([...a, z1], [...c, z1], [cx, cy, z1 + rise], [mx/l, my/l, Math.hypot(mx, my)/l]);}}
-    else {const tris = roof || ShapeUtils.triangulateShape(ring.map(p => new Vector2(...p)), []); for (const t of tris) triangle(...t.map(i => [...ring[i], z1]), [0, 0, 1]);}
+    else if (z1 <= DETAIL.hiddenRoof) {const tris = roof || ShapeUtils.triangulateShape(ring.map(p => new Vector2(...p)), []); for (const t of tris) triangle(...t.map(i => [...ring[i], z1]), [0, 0, 1]);}
     for (let i = 0; i < ring.length; i++) {
       const a = ring[i], c = ring[(i + 1) % ring.length], dx = c[0]-a[0], dy = c[1]-a[1], l = Math.hypot(dx, dy);
       if (l < 0.01) continue;
@@ -284,15 +303,18 @@ export function buildImpostors(world, budget = {vertices: 3000, buildings: 64}, 
   }
   const emit = (a, b2, c, n, k) => {code = k; triangle(a, b2, c, n);};
   for (const p of [...world.buildings.filter(b => b.bridge), ...(world.bridges || [])]) if (pos.length / 3 + p.points.length * 30 <= budget.vertices) emitBridge(p, emit, false);
-  for (const b of world.buildings) {
-    if (count >= budget.buildings) break;
-    if (b.part || b.bridge) continue; // the far field uses the outline's silhouette, not its parts
+  // The far field uses outlines, not their parts; past the vertex budget a silhouette becomes its bounding box.
+  const outlines = world.buildings.filter(b => !b.part && !b.bridge);
+  let reserveBox = outlines.length * DETAIL.box;
+  for (const b of outlines) {
+    reserveBox -= DETAIL.box;
+    if (count >= budget.buildings || pos.length / 3 + DETAIL.box > budget.vertices) break;
     code = b.style?.kind || 0;
+    if (pos.length / 3 + 2 * DETAIL.box + reserveBox > budget.vertices) {const [a, c, d, e] = b.bounds; prism([[a,c],[d,c],[d,e],[a,e]], [[0,1,2],[0,2,3]], 0, b.height); fallback++; count++; continue;}
     // Spires, domes and minarets are skyline shapes too: shaped buildings keep their massing, at fewer segments.
     if (b.style?.shape && pos.length / 3 + 700 <= budget.vertices && emitShaped(b, emit, 8)) {count++; continue;}
     let ring = simplifyRing(b.rings[0], tolerance, maxPoints), roof = ShapeUtils.triangulateShape(ring.map(p => new Vector2(...p)), []);
     if (!roof.length) {const [a, c, d, e] = b.bounds; ring = [[a,c],[d,c],[d,e],[a,e]]; roof = [[0,1,2],[0,2,3]]; fallback++;}
-    if (pos.length / 3 + ring.length * 6 + roof.length * 3 > budget.vertices) break;
     const len = (p, q) => Math.hypot(q[0]-p[0], q[1]-p[1]), o = b.rings[0];
     const gabled = b.style?.kind === 1 && !b.flat && b.rings.length === 1 && o.length === 4 && ringArea(o) <= 250;
     const crown = towerCrown(b);
@@ -310,7 +332,7 @@ export function buildImpostors(world, budget = {vertices: 3000, buildings: 64}, 
     }
     count++;
   }
-  return {position: new Float32Array(pos), normal: new Float32Array(normal), uv: new Float32Array(uv), style: new Uint8Array(styles), count, fallback, omitted: world.buildings.length - count};
+  return {position: new Float32Array(pos), normal: new Float32Array(normal), uv: new Float32Array(uv), style: new Uint8Array(styles), count, fallback, omitted: outlines.length - count};
 }
 // Ground surfaces and trees from the same OSM response (v0.1.19; every green cover since v0.1.36). Surface codes,
 // shared with the road shader: 1 grass/park/garden/pitch/meadow, 2 wood/forest, 3 water (lakes, riverbanks, and rivers,

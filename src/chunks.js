@@ -1,12 +1,13 @@
 import {buildGeometry,buildImpostors,LIMITS} from './world.js';
 import {createSectorLookup} from './sectors.js';
 // Prototype E: uniform spatial buckets, not the later ingest-time street-sector graph.
-export const CHUNKS=Object.freeze({size:128,active:24,prefetch:4,margin:12,vertices:9000,buildings:16,roadVertices:600});
+// Per-chunk budgets are vertices; building counts are only sanity caps (detail tiers in world.js, DETAIL).
+export const CHUNKS=Object.freeze({size:128,active:24,prefetch:4,margin:12,vertices:9000,buildings:1000,roadVertices:600});
 // Prototype G level of detail, per chunk. Chunks within `near` m (kept until `near + hysteresis`) get full extrusion;
 // the rest out to `far` get silhouette prisms. A near chunk that would exceed the full-detail budget is downgraded to
 // silhouettes instead of being omitted. `fade` is the distance band over which the near shader removes façade detail,
 // so the geometry swap at the boundary changes shape only slightly, not surface. All far chunks share one draw call.
-export const LOD=Object.freeze({near:120,hysteresis:24,far:300,fade:[90,150],farChunks:40,farVertices:40000,farBuildings:900,chunkVertices:3000,chunkBuildings:120});
+export const LOD=Object.freeze({near:120,hysteresis:24,far:300,fade:[90,150],farChunks:40,farVertices:40000,farBuildings:6000,chunkVertices:3000,chunkBuildings:1000});
 const distance=(b,x,y)=>Math.hypot(Math.max(b[0]-x,0,x-b[2]),Math.max(b[1]-y,0,y-b[3]));
 const bytes=g=>g.position.byteLength+g.normal.byteLength+g.uv.byteLength+g.style.byteLength;
 export function createChunkIndex(world,prepared=null){
@@ -43,8 +44,8 @@ export function createChunkStream(world,graph=null){
  const farCache=new Map(),full=new Set();let farLoaded=0,lastKey=null;
  function prepareFar(c){if(farCache.has(c.id))return farCache.get(c.id);const geometry=buildImpostors(c,{vertices:LOD.chunkVertices,buildings:LOD.chunkBuildings});const entry={geometry,bytes:bytes(geometry)};farCache.set(c.id,entry);farLoaded++;return entry;}
  function merge(entries){let length=0,count=0;for(const g of entries){length+=g.position.length;count+=g.count;}
-  const out={position:new Float32Array(length),normal:new Float32Array(length),uv:new Float32Array(length/3*2),style:new Uint8Array(length/3*2),count,simplified:0,omitted:0};
-  let at=0;for(const g of entries){out.position.set(g.position,at);out.normal.set(g.normal,at);out.uv.set(g.uv,at/3*2);out.style.set(g.style,at/3*2);at+=g.position.length;out.simplified+=g.simplified||0;out.omitted+=g.omitted||0;}return out;}
+  const out={position:new Float32Array(length),normal:new Float32Array(length),uv:new Float32Array(length/3*2),style:new Uint8Array(length/3*2),count,simplified:0,facades:0,boxes:0,fallback:0,omitted:0};
+  let at=0;for(const g of entries){out.position.set(g.position,at);out.normal.set(g.normal,at);out.uv.set(g.uv,at/3*2);out.style.set(g.style,at/3*2);at+=g.position.length;out.simplified+=g.simplified||0;out.facades+=g.facades||0;out.boxes+=g.boxes||0;out.fallback+=g.fallback||0;out.omitted+=g.omitted||0;}return out;}
  return {update(x,y,heading=0){
   const start=performance.now(),h=heading*Math.PI/180,fx=x+Math.sin(h)*(LOD.near+CHUNKS.size/2),fy=y+Math.cos(h)*(LOD.near+CHUNKS.size/2);
   const lookupStart=performance.now(),query=lookup?.query(x,y,LOD.far+CHUNKS.size);

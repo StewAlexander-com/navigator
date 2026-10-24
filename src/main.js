@@ -11,7 +11,7 @@ import {distance as roadDistance, ROAD_CACHE} from './road-packages.js';
 import {progressFraction, progressText, updateRate} from './progress.js';
 import {indoorVerdict, INDOOR} from './indoor.js';
 import {place, placedRect, overlapCount, intersects} from './layout.js';
-import {parseCoordinates,geocode,formatPoint} from './places.js';
+import {parseCoordinates,searchPlaces,formatPoint,roadStart} from './places.js';
 import {visibleLabels,infoRows,fetchInfo,LABELS} from './building-labels.js';
 import {WAYDATA,PIN_COLORS,findJunctions,pickSignposts,nextCrossing,pinPose,formatDistance} from './wayfinding-data.js';
 import './style.css';
@@ -296,7 +296,7 @@ worker.onmessage=({data})=>{
   if(data.origin.join()!==area.origin.join()||data.bbox.join()!==area.bbox.join())reanchor(data.origin,data.bbox);
   // An explored place (or the return to LA) starts at the centre of its square, like the demo.
   if(edge.stepping){edge.stepping=false;edge.asked=false;}
-  if(explore.pending){explore.active=!!explore.pending.point;explore.name=explore.pending.name;explore.point=explore.pending.point;explore.pending=null;Object.assign(player,{x:0,y:0,pitch:0,travelBearing:null,chevronHeading:null});camera();}
+  if(explore.pending){explore.active=!!explore.pending.point;explore.name=explore.pending.name;explore.point=explore.pending.point;explore.pending=null;explore.arrive=true;Object.assign(player,{x:0,y:0,pitch:0,travelBearing:null,chevronHeading:null});camera();}
   locate();
   area.live=data.live;area.radius=data.radius;area.provider=data.provider;area.cached=!!data.cached;area.kinds=data.kinds||null;area.prior=!!data.prior;metrics.responseBytes=data.bytes;
   $('area-name').textContent=explore.active?explore.name:data.radius?'Live area around you':'Downtown Los Angeles';
@@ -304,6 +304,7 @@ worker.onmessage=({data})=>{
  }
  if(data.labels){labels.anchors=data.labels.anchors;labels.blockers=data.labels.blockers;labels.pose=null;}
  if(data.roads){baseRoads=data.roads;roads=cacheRoads?.length?cacheRoads:baseRoads;worldLayer.setRoads(roads);}
+ if(explore.arrive&&data.roads){explore.arrive=false;const start=roadStart(baseRoads,player);if(start?.moved){Object.assign(player,{x:start.x,y:start.y,heading:start.heading});camera();}}
  if(data.geometry)worldLayer.setBuildings({...data.geometry,far:data.far});if(data.extras){worldLayer.setSurfaces(data.extras.surfaces);worldLayer.setTrees(data.extras.trees);metrics.extras={areas:data.extras.areaCount,trees:data.extras.treeCount,mapped:data.extras.mappedTrees};}metrics.stream=data.stream;lastBuild=[data.x,data.y];lastStreamHeading=data.heading;
  if(Math.hypot(player.x-data.x,player.y-data.y)>12){busy=true;worker.postMessage({type:'rebuild',id:++requestId,x:player.x,y:player.y,heading:player.travelBearing??player.heading});}
  metrics.queryMs=data.ms;
@@ -441,25 +442,36 @@ $('edge-next').onclick=()=>{$('edge-dialog').close();const point=toLngLat(player
 // Explore a place: coordinates are parsed locally; anything else is looked up with Nominatim. GPS is turned off first,
 // because a live fix would pull the scene back to where you are.
 function setPlaceUrl(point,name){const url=new URL(location.href);if(point){url.searchParams.set('at',`${point[1].toFixed(5)},${point[0].toFixed(5)}`);if(name)url.searchParams.set('name',name);else url.searchParams.delete('name');}else{url.searchParams.delete('at');url.searchParams.delete('name');}history.replaceState(null,'',url);}
-function explorePlace(point,name){
+function explorePlace(point,name,detail=''){
  if(positioning.state.mode==='gps'){followCompass=true;positioning.disable();track.clear();gps.target=null;gps.rawHeading=null;gps.speed=null;gps.course=null;gps.blend=0;gps.prefetch=null;indoor.verdict=null;showIndoor();}
  const label=name||formatPoint(point);
  if(!request(point?{center:point,radius:LIMITS.area,fix:point}:{}))return false;
- explore.pending={point,name:label};if(point)beginProgress('area',`Downloading OpenStreetMap around ${label}`);setPlaceUrl(point,name);return true;
+ explore.pending={point,name:label};if(point)beginProgress('area',detail?`Going to ${label}, ${detail}`:`Downloading OpenStreetMap around ${label}`);setPlaceUrl(point,name);return true;
 }
 function startFromUrl(){const at=new URL(location.href).searchParams.get('at'),point=at&&parseCoordinates(at);if(!point)return false;return explorePlace(point,new URL(location.href).searchParams.get('name')||null);}
-function openPlace(){$('guide').close();stop();$('place-status').textContent='';$('place-input').value=explore.point?`${explore.point[1].toFixed(5)}, ${explore.point[0].toFixed(5)}`:'';$('place-dialog').showModal();$('place-input').focus();}
+function openPlace(){$('guide').close();stop();$('place-status').textContent='';placeSearch.text='';showChoices([]);$('place-input').value=explore.point?`${explore.point[1].toFixed(5)}, ${explore.point[0].toFixed(5)}`:'';$('place-dialog').showModal();$('place-input').focus();}
 $('building-close').onclick=closeBuilding;$('building-dialog').addEventListener('close',()=>{if(labels.info)closeBuilding();});
 $('place-open').onclick=openPlace;$('guide-place').onclick=openPlace;$('place-cancel').onclick=()=>$('place-dialog').close();
+const placeSearch={text:'',choices:[]};
+function showChoices(choices){
+ placeSearch.choices=choices;const list=$('place-choices');list.replaceChildren();
+ for(const c of choices){const li=document.createElement('li'),b=document.createElement('button'),n=document.createElement('strong'),d=document.createElement('span');b.type='button';n.textContent=c.name;d.textContent=c.detail||formatPoint(c.point);b.append(n,d);b.onclick=()=>goToChoice(c);li.append(b);list.append(li);}
+ list.hidden=!choices.length;$('place-choices-title').hidden=!choices.length;$('place-choices-title').textContent=choices.length>1?'Did you mean':'Found';
+ $('place-go').textContent=choices.length?`Go to ${choices[0].name}${choices[0].detail?`, ${choices[0].detail.split(', ').slice(-2)[0]}`:''}`:'Explore here';
+}
+function goToChoice(c){if(busy){$('place-status').textContent='An area is still loading. Try again in a moment.';return;}$('place-dialog').close();explorePlace(c.point,c.name,c.detail);}
+$('place-input').addEventListener('input',()=>{if(placeSearch.choices.length&&$('place-input').value.trim()!==placeSearch.text){showChoices([]);$('place-status').textContent='';}});
 $('place-form').onsubmit=async e=>{
  e.preventDefault();const text=$('place-input').value.trim();if(!text){$('place-status').textContent='Type coordinates or a place name.';return;}
- let point=parseCoordinates(text),name=null;
- if(!point){$('place-go').disabled=true;$('place-status').textContent='Looking up that place with OpenStreetMap Nominatim…';
-  try{const hit=await geocode(text);if(!hit){$('place-status').textContent='No place found. Try coordinates such as 36.0957, -79.2670.';return;}point=hit.point;name=hit.name;}
-  catch(error){$('place-status').textContent=`Place search is unavailable (${error.message}). Coordinates still work.`;return;}
-  finally{$('place-go').disabled=false;}}
- if(busy){$('place-status').textContent='An area is still loading. Try again in a moment.';return;}
- $('place-dialog').close();explorePlace(point,name);
+ const point=parseCoordinates(text);
+ if(point){showChoices([]);if(busy){$('place-status').textContent='An area is still loading. Try again in a moment.';return;}$('place-dialog').close();explorePlace(point,null);return;}
+ if(text===placeSearch.text&&placeSearch.choices.length){goToChoice(placeSearch.choices[0]);return;}
+ $('place-go').disabled=true;showChoices([]);$('place-status').textContent='Looking up that place with OpenStreetMap Nominatim…';
+ try{const choices=await searchPlaces(text);placeSearch.text=text;
+  if(!choices.length){$('place-status').textContent='No place found. Check the spelling, add a region or country, or use coordinates such as 36.0957, -79.2670.';return;}
+  showChoices(choices);$('place-status').textContent=choices.length>1?'Several places match. Pick the one you mean.':'Check this is the right place, then go.';}
+ catch(error){$('place-status').textContent=`Place search is unavailable (${error.message}). Coordinates still work.`;}
+ finally{$('place-go').disabled=false;}
 };
 $('place-la').onclick=()=>{$('place-dialog').close();if(!explore.active&&!area.live){notice('Already showing the Los Angeles demo.',3000);return;}explore.active=false;explorePlace(null,'Downtown Los Angeles');setPlaceUrl(null);};$('close-guide').onclick=()=>$('guide').close();
 $('refresh').onclick=()=>request(area.live&&area.radius?{center:area.origin,radius:area.radius,fresh:true}:{live:true});

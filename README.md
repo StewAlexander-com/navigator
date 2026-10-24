@@ -1,6 +1,6 @@
 # Navigator
 
-A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.34 · Prototype G** adds junction signposts, street-level pins and a session discovery trail on top of OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
+A GitHub Pages PWA for bounded, first-person exploration of real OpenStreetMap streets. **v0.1.35 · Prototype G** adds junction signposts, street-level pins and a session discovery trail on top of OSM ground surfaces, trees and lane markings on top of a near/far level-of-detail pass (full extrusion to 120 m, flat-shaded silhouettes to 300 m) and a timestamp-keyed driving position track (v0.1.18), retaining the street-sector graph, bounded streaming, shadow alignment and the compass chevron. Sensors are off until you enable them; the app never requests a camera and does not provide route guidance.
 
 [![Navigator showing sunlit OSM buildings, a floating South Spring Street label, and a cyan compass chevron in the Los Angeles demo](docs/images/navigator-hero.png)](https://stewalexander-com.github.io/navigator/)
 
@@ -93,6 +93,13 @@ Per chunk, not per building, so prepared geometry stays cacheable. Chunks within
 Transition: the full-detail shader fades windows, doors, fascias and siding out between 90 and 150 m, and silhouettes use the same lighting with no façade, so crossing the boundary changes outline slightly, not surface. One fog curve now spans 105–294 m (was 63–176 m). Roads keep their 180 m reach and blend into the ground colour from 130 m so no road edge shows in the wider view.
 
 Resource rule: a near chunk that would exceed the 160-building / 90,000-vertex full-detail budget is downgraded to silhouettes instead of being omitted. Bundled LA at the start pose: 12 full chunks (45 buildings, 5,463 vertices), 20 silhouette chunks (57 buildings, 3,150 vertices, 105 KiB), chunk update 21.6 ms cold / 1.8 ms warm in Node. Silhouettes are the "flat silhouette" option from the brief; textured billboard impostors are not used (they need offscreen rendering per building and add texture memory). OSM supplies no façade data, so distant façade detail is not lost information.
+
+### Change place: clearer, confirmed, and always on a street (v0.1.35)
+
+- **Prominent entry point.** “Change place” is the main feature after walking, so it is now a filled cyan button with a search icon instead of a quiet outline.
+- **Legible place name.** The area name, eyebrow and data line carry a three-layer dark halo (tight, 5 px and 12 px), so white text reads over pale facades and bright sky alike.
+- **“Did you mean”.** A place name now asks Nominatim for up to five matches with address details and lists them as *name* over *town, region, country* (duplicates removed). The first match is outlined and the main button names it, e.g. **Go to Springfield, Illinois**; any other match is one tap. Editing the text clears the list. Coordinates still go straight there. While the area downloads, progress reads **Going to Springfield, Illinois, United States**. Nominatim’s usage policy forbids search-as-you-type, so matches appear on submit.
+- **Arrive on a road.** After a place loads you stand on the nearest street centre line (`roadStart` in `src/places.js`), never inside a building. Named streets are preferred; unnamed ways cost 15 m, service lanes 12 m more, motorways 40 m, and footpaths 80 m, so a path is used only when no street is near. You face along the street, whichever way is closer to the previous heading, and if the centre of the square is already on a street you stay put (the Los Angeles demo start is unchanged). Example: the Empire State Building's coordinates now start you on West 33rd Street, 39 m from the building's centroid.
 
 ### Phone layout: compass beside the minimap (v0.1.34)
 
